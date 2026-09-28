@@ -1,7 +1,6 @@
 from fastapi import FastAPI, UploadFile, File, HTTPException
 from pydantic import BaseModel
 from fastapi.middleware.cors import CORSMiddleware
-from features import prepare_features
 import joblib
 import pandas as pd
 import sys
@@ -31,13 +30,21 @@ app.add_middleware(
 )
 
 MODEL_PATH = ROOT_DIR / "ml" / "profit_model.pkl"
+ANOMALY_MODEL_PATH = ROOT_DIR / "ml" / "anomaly_model.pkl"
 
 try:
     model = joblib.load(MODEL_PATH)
-    print("✅ Profit ML model loaded successfully.")
+    print("Profit ML model loaded successfully.")
 except Exception as e:
     model = None
-    print(f"⚠️ Warning: Could not load ML model: {e}")
+    print(f"Warning: Could not load ML model: {e}")
+
+try:
+    anomaly_model = joblib.load(ANOMALY_MODEL_PATH)
+    print("Anomaly model loaded successfully.")
+except Exception as e:
+    anomaly_model = None
+    print(f"Warning: Could not load anomaly model: {e}")
 
 
 @app.get("/")
@@ -72,7 +79,6 @@ async def upload_csv(file: UploadFile = File(...)):
         )
 
     try:
-
         contents = await file.read()
 
         df = pd.read_csv(io.BytesIO(contents))
@@ -108,7 +114,6 @@ async def upload_csv(file: UploadFile = File(...)):
         ]
 
         if missing_columns:
-
             raise HTTPException(
                 status_code=400,
                 detail={
@@ -181,14 +186,11 @@ async def upload_csv(file: UploadFile = File(...)):
         )
 
         if total_revenue != 0:
-
             profit_margin = (
                 total_profit /
                 total_revenue
             ) * 100
-
         else:
-
             profit_margin = 0.0
 
         feature_df = prepare_features(
@@ -232,32 +234,19 @@ async def upload_csv(file: UploadFile = File(...)):
 
         return {
             "success": True,
-
             "message": "CSV processed successfully.",
-
             "filename": file.filename,
-
             "rows_processed": int(len(df)),
-
             "metrics": {
-
                 "total_revenue": total_revenue,
-
                 "total_expense": total_expense,
-
                 "total_profit": total_profit,
-
                 "total_sales": total_sales,
-
                 "average_revenue": average_revenue,
-
                 "average_expense": average_expense,
-
                 "average_profit": average_profit,
-
                 "profit_margin": profit_margin
             },
-
             "predicted_profit": predicted_profit
         }
 
@@ -266,7 +255,7 @@ async def upload_csv(file: UploadFile = File(...)):
 
     except Exception as e:
 
-        print("\n❌ CSV processing error:")
+        print("\nCSV processing error:")
         print(str(e))
 
         raise HTTPException(
@@ -279,11 +268,8 @@ async def upload_csv(file: UploadFile = File(...)):
 
 
 class ProfitPredictionRequest(BaseModel):
-
     Quantity: float
-
     Revenue: float
-
     Expense: float
 
 
@@ -293,7 +279,6 @@ def predict_profit(
 ):
 
     if model is None:
-
         raise HTTPException(
             status_code=500,
             detail="ML model could not be loaded."
@@ -327,7 +312,6 @@ def predict_profit(
         ]
 
         if missing_features:
-
             raise HTTPException(
                 status_code=500,
                 detail={
@@ -354,13 +338,129 @@ def predict_profit(
 
     except Exception as e:
 
-        print("\n❌ ML prediction error:")
+        print("\nML prediction error:")
         print(str(e))
 
         raise HTTPException(
             status_code=500,
             detail={
                 "message": "Profit prediction failed.",
+                "error": str(e)
+            }
+        )
+
+
+class RiskAnalysisRequest(BaseModel):
+    Quantity: float
+    Revenue: float
+    Expense: float
+
+
+@app.post("/analyze-risk")
+def analyze_risk(
+    data: RiskAnalysisRequest
+):
+
+    if model is None:
+        raise HTTPException(
+            status_code=500,
+            detail="Profit ML model could not be loaded."
+        )
+
+    if anomaly_model is None:
+        raise HTTPException(
+            status_code=500,
+            detail="Anomaly model could not be loaded."
+        )
+
+    try:
+
+        df = pd.DataFrame([
+            {
+                "Quantity": data.Quantity,
+                "Revenue": data.Revenue,
+                "Expense": data.Expense
+            }
+        ])
+
+        df = prepare_features(df)
+
+        features = [
+            "Quantity",
+            "Revenue",
+            "Expense",
+            "Profit_Margin",
+            "Revenue_per_Unit",
+            "Expense_per_Unit"
+        ]
+
+        prediction = model.predict(
+            df[features]
+        )
+
+        predicted_profit = float(
+            prediction[0]
+        )
+
+        anomaly_prediction = anomaly_model.predict(
+            df[features]
+        )[0]
+
+        anomaly_detected = anomaly_prediction == -1
+
+        profit_margin = float(
+            df["Profit_Margin"].iloc[0]
+        )
+
+        risk_score = 0
+
+        if anomaly_detected:
+            risk_score += 60
+        else:
+            risk_score += 10
+
+        if profit_margin < 0:
+            risk_score += 25
+        elif profit_margin < 10:
+            risk_score += 15
+        elif profit_margin < 20:
+            risk_score += 5
+
+        if predicted_profit < 0:
+            risk_score += 15
+
+        risk_score = max(
+            0,
+            min(100, risk_score)
+        )
+
+        if risk_score <= 30:
+            risk_level = "LOW"
+        elif risk_score <= 60:
+            risk_level = "MEDIUM"
+        else:
+            risk_level = "HIGH"
+
+        return {
+            "success": True,
+            "predicted_profit": predicted_profit,
+            "anomaly_detected": bool(anomaly_detected),
+            "risk_score": risk_score,
+            "risk_level": risk_level
+        }
+
+    except HTTPException:
+        raise
+
+    except Exception as e:
+
+        print("\nRisk analysis error:")
+        print(str(e))
+
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "message": "Risk analysis failed.",
                 "error": str(e)
             }
         )
