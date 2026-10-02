@@ -4,6 +4,37 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/lib/auth";
 
+type UploadResult = {
+  success: boolean;
+  message: string;
+  filename: string;
+  rows_processed: number;
+  metrics: {
+    total_revenue: number;
+    total_expense: number;
+    total_profit: number;
+    total_sales: number;
+    average_revenue: number;
+    average_expense: number;
+    average_profit: number;
+    profit_margin: number;
+  };
+  predicted_profit: number | null;
+};
+
+type ProfitPredictionResult = {
+  success: boolean;
+  predicted_profit: number;
+};
+
+type RiskAnalysisResult = {
+  success: boolean;
+  predicted_profit: number;
+  anomaly_detected: boolean;
+  risk_score: number;
+  risk_level: string;
+};
+
 type WhatIfResult = {
   success: boolean;
   current_predicted_profit: number;
@@ -15,6 +46,27 @@ type WhatIfResult = {
 export default function DashboardPage() {
   const { user, isAuthenticated, isLoading, logout } = useAuth();
   const router = useRouter();
+
+  const [uploadFile, setUploadFile] = useState<File | null>(null);
+  const [uploadResult, setUploadResult] = useState<UploadResult | null>(null);
+  const [uploadLoading, setUploadLoading] = useState(false);
+  const [uploadError, setUploadError] = useState("");
+
+  const [profitQuantity, setProfitQuantity] = useState("");
+  const [profitRevenue, setProfitRevenue] = useState("");
+  const [profitExpense, setProfitExpense] = useState("");
+  const [profitResult, setProfitResult] =
+    useState<ProfitPredictionResult | null>(null);
+  const [profitLoading, setProfitLoading] = useState(false);
+  const [profitError, setProfitError] = useState("");
+
+  const [riskQuantity, setRiskQuantity] = useState("");
+  const [riskRevenue, setRiskRevenue] = useState("");
+  const [riskExpense, setRiskExpense] = useState("");
+  const [riskResult, setRiskResult] =
+    useState<RiskAnalysisResult | null>(null);
+  const [riskLoading, setRiskLoading] = useState(false);
+  const [riskError, setRiskError] = useState("");
 
   const [currentQuantity, setCurrentQuantity] = useState("");
   const [currentRevenue, setCurrentRevenue] = useState("");
@@ -46,6 +98,154 @@ export default function DashboardPage() {
 
   const displayName =
     user?.name || user?.email?.split("@")[0] || "User";
+
+  const handleUpload = async () => {
+    setUploadError("");
+    setUploadResult(null);
+
+    if (!uploadFile) {
+      setUploadError("Please select a CSV file.");
+      return;
+    }
+
+    setUploadLoading(true);
+
+    try {
+      const formData = new FormData();
+      formData.append("file", uploadFile);
+
+      const response = await fetch("http://127.0.0.1:8000/upload", {
+        method: "POST",
+        body: formData,
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(
+          typeof data.detail === "string"
+            ? data.detail
+            : data.detail?.message || "Upload failed."
+        );
+      }
+
+      setUploadResult(data);
+    } catch (err) {
+      setUploadError(
+        err instanceof Error
+          ? err.message
+          : "Unable to connect to EVORA backend."
+      );
+    } finally {
+      setUploadLoading(false);
+    }
+  };
+
+  const handleProfitPrediction = async () => {
+    setProfitError("");
+    setProfitResult(null);
+
+    if (!profitQuantity || !profitRevenue || !profitExpense) {
+      setProfitError("Please enter Quantity, Revenue and Expense.");
+      return;
+    }
+
+    setProfitLoading(true);
+
+    try {
+      const response = await fetch(
+        "http://127.0.0.1:8000/ml/predict-profit",
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            Quantity: Number(profitQuantity),
+            Revenue: Number(profitRevenue),
+            Expense: Number(profitExpense),
+          }),
+        }
+      );
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(
+          typeof data.detail === "string"
+            ? data.detail
+            : data.detail?.message || "Profit prediction failed."
+        );
+      }
+
+      setProfitResult(data);
+    } catch (err) {
+      setProfitError(
+        err instanceof Error
+          ? err.message
+          : "Unable to connect to EVORA backend."
+      );
+    } finally {
+      setProfitLoading(false);
+    }
+  };
+
+  const handleRiskAnalysis = async () => {
+    setRiskError("");
+    setRiskResult(null);
+
+    if (!riskQuantity || !riskRevenue || !riskExpense) {
+      setRiskError("Please enter Quantity, Revenue and Expense.");
+      return;
+    }
+
+    setRiskLoading(true);
+
+    try {
+      const response = await fetch(
+        "http://127.0.0.1:8000/analyze-risk",
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            Quantity: Number(riskQuantity),
+            Revenue: Number(riskRevenue),
+            Expense: Number(riskExpense),
+          }),
+        }
+      );
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(
+          typeof data.detail === "string"
+            ? data.detail
+            : data.detail?.message || "Risk analysis failed."
+        );
+      }
+
+      setRiskResult(data);
+    } catch (err) {
+      setRiskError(
+        err instanceof Error
+          ? err.message
+          : "Unable to connect to EVORA backend."
+      );
+    } finally {
+      setRiskLoading(false);
+    }
+  };
+
+  const handleRiskReset = () => {
+    setRiskQuantity("");
+    setRiskRevenue("");
+    setRiskExpense("");
+    setRiskResult(null);
+    setRiskError("");
+  };
 
   const handleWhatIf = async () => {
     setError("");
@@ -84,7 +284,11 @@ export default function DashboardPage() {
       const data = await response.json();
 
       if (!response.ok) {
-        throw new Error(data.detail || "Something went wrong.");
+        throw new Error(
+          typeof data.detail === "string"
+            ? data.detail
+            : data.detail?.message || "Something went wrong."
+        );
       }
 
       setResult(data);
@@ -99,7 +303,7 @@ export default function DashboardPage() {
     }
   };
 
-  const handleReset = () => {
+  const handleWhatIfReset = () => {
     setCurrentQuantity("");
     setCurrentRevenue("");
     setCurrentExpense("");
@@ -113,10 +317,16 @@ export default function DashboardPage() {
   const isIncrease = result && result.profit_difference > 0;
   const isDecrease = result && result.profit_difference < 0;
 
+  const riskLevelStyle =
+    riskResult?.risk_level === "HIGH"
+      ? "bg-red-100 text-red-700"
+      : riskResult?.risk_level === "MEDIUM"
+      ? "bg-yellow-100 text-yellow-700"
+      : "bg-green-100 text-green-700";
+
   return (
     <div className="min-h-screen bg-slate-50 px-4 py-8 sm:px-6 lg:px-8">
       <div className="max-w-6xl mx-auto">
-
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-8">
           <div>
             <p className="text-sm font-bold text-blue-700">
@@ -140,8 +350,353 @@ export default function DashboardPage() {
           </button>
         </div>
 
-        <div className="bg-white rounded-3xl border border-slate-200 shadow-sm p-6 sm:p-8">
+        <div className="bg-white rounded-3xl border border-slate-200 shadow-sm p-6 sm:p-8 mb-6">
+          <div className="mb-6">
+            <p className="text-sm font-bold text-blue-700">
+              Business Data
+            </p>
 
+            <h2 className="text-2xl sm:text-3xl font-black text-slate-900 mt-1">
+              CSV Upload
+            </h2>
+
+            <p className="text-sm text-slate-500 mt-2 max-w-2xl">
+              Upload business data to analyze revenue, expense, profit and
+              sales.
+            </p>
+          </div>
+
+          <div className="flex flex-col sm:flex-row gap-4">
+            <input
+              type="file"
+              accept=".csv"
+              onChange={(e) => {
+                setUploadFile(e.target.files?.[0] || null);
+                setUploadResult(null);
+                setUploadError("");
+              }}
+              className="flex-1 px-4 py-3 rounded-xl border border-slate-200 bg-white"
+            />
+
+            <button
+              onClick={handleUpload}
+              disabled={uploadLoading}
+              className="px-6 py-3 rounded-xl bg-blue-700 text-white font-bold hover:bg-blue-800 disabled:opacity-60 transition-colors cursor-pointer"
+            >
+              {uploadLoading ? "Uploading..." : "Upload CSV"}
+            </button>
+          </div>
+
+          {uploadError && (
+            <div className="mt-4 rounded-xl bg-red-50 border border-red-200 px-4 py-3 text-sm font-semibold text-red-700">
+              {uploadError}
+            </div>
+          )}
+
+          {uploadResult && (
+            <div className="mt-6">
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                <div className="rounded-2xl bg-slate-50 border border-slate-200 p-5">
+                  <p className="text-sm text-slate-500">Total Revenue</p>
+                  <p className="text-2xl font-black text-slate-900 mt-2">
+                    ₹{uploadResult.metrics.total_revenue.toLocaleString()}
+                  </p>
+                </div>
+
+                <div className="rounded-2xl bg-slate-50 border border-slate-200 p-5">
+                  <p className="text-sm text-slate-500">Total Expense</p>
+                  <p className="text-2xl font-black text-slate-900 mt-2">
+                    ₹{uploadResult.metrics.total_expense.toLocaleString()}
+                  </p>
+                </div>
+
+                <div className="rounded-2xl bg-slate-50 border border-slate-200 p-5">
+                  <p className="text-sm text-slate-500">Total Profit</p>
+                  <p className="text-2xl font-black text-slate-900 mt-2">
+                    ₹{uploadResult.metrics.total_profit.toLocaleString()}
+                  </p>
+                </div>
+
+                <div className="rounded-2xl bg-blue-50 border border-blue-100 p-5">
+                  <p className="text-sm text-slate-500">
+                    Predicted Profit
+                  </p>
+
+                  <p className="text-2xl font-black text-blue-700 mt-2">
+                    ₹
+                    {uploadResult.predicted_profit !== null
+                      ? uploadResult.predicted_profit.toLocaleString()
+                      : "N/A"}
+                  </p>
+                </div>
+              </div>
+
+              <div className="mt-4 text-sm text-slate-600">
+                File:{" "}
+                <span className="font-semibold">
+                  {uploadResult.filename}
+                </span>
+                {" • "}
+                Rows:{" "}
+                <span className="font-semibold">
+                  {uploadResult.rows_processed}
+                </span>
+                {" • "}
+                Profit Margin:{" "}
+                <span className="font-semibold">
+                  {uploadResult.metrics.profit_margin.toFixed(2)}%
+                </span>
+              </div>
+            </div>
+          )}
+        </div>
+
+        <div className="bg-white rounded-3xl border border-slate-200 shadow-sm p-6 sm:p-8 mb-6">
+          <div className="mb-6">
+            <p className="text-sm font-bold text-blue-700">
+              Machine Learning
+            </p>
+
+            <h2 className="text-2xl sm:text-3xl font-black text-slate-900 mt-1">
+              Profit Prediction
+            </h2>
+
+            <p className="text-sm text-slate-500 mt-2 max-w-2xl">
+              Enter business values to predict the expected profit.
+            </p>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div>
+              <label className="block text-sm font-semibold text-slate-700 mb-1.5">
+                Quantity
+              </label>
+
+              <input
+                type="number"
+                value={profitQuantity}
+                onChange={(e) => setProfitQuantity(e.target.value)}
+                placeholder="e.g. 100"
+                className="w-full px-4 py-3 rounded-xl border border-slate-200 bg-white outline-none focus:ring-2 focus:ring-blue-500"
+              />
+            </div>
+
+            <div>
+              <label className="block text-sm font-semibold text-slate-700 mb-1.5">
+                Revenue
+              </label>
+
+              <input
+                type="number"
+                value={profitRevenue}
+                onChange={(e) => setProfitRevenue(e.target.value)}
+                placeholder="e.g. 50000"
+                className="w-full px-4 py-3 rounded-xl border border-slate-200 bg-white outline-none focus:ring-2 focus:ring-blue-500"
+              />
+            </div>
+
+            <div>
+              <label className="block text-sm font-semibold text-slate-700 mb-1.5">
+                Expense
+              </label>
+
+              <input
+                type="number"
+                value={profitExpense}
+                onChange={(e) => setProfitExpense(e.target.value)}
+                placeholder="e.g. 30000"
+                className="w-full px-4 py-3 rounded-xl border border-slate-200 bg-white outline-none focus:ring-2 focus:ring-blue-500"
+              />
+            </div>
+          </div>
+
+          <button
+            onClick={handleProfitPrediction}
+            disabled={profitLoading}
+            className="w-full mt-6 py-3.5 rounded-xl bg-blue-700 text-white font-bold hover:bg-blue-800 disabled:opacity-60 transition-colors cursor-pointer"
+          >
+            {profitLoading ? "Predicting Profit..." : "Predict Profit"}
+          </button>
+
+          {profitError && (
+            <div className="mt-5 rounded-xl bg-red-50 border border-red-200 px-4 py-3 text-sm font-semibold text-red-700">
+              {profitError}
+            </div>
+          )}
+
+          {profitResult && (
+            <div className="mt-6 rounded-2xl bg-blue-50 border border-blue-100 p-6">
+              <p className="text-sm font-semibold text-slate-500">
+                Predicted Profit
+              </p>
+
+              <p className="text-3xl font-black text-blue-700 mt-2">
+                ₹{profitResult.predicted_profit.toLocaleString()}
+              </p>
+            </div>
+          )}
+        </div>
+
+        <div className="bg-white rounded-3xl border border-slate-200 shadow-sm p-6 sm:p-8 mb-6">
+          <div className="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-3 mb-8">
+            <div>
+              <p className="text-sm font-bold text-blue-700">
+                Risk Management
+              </p>
+
+              <h2 className="text-2xl sm:text-3xl font-black text-slate-900 mt-1">
+                Risk Analysis
+              </h2>
+
+              <p className="text-sm text-slate-500 mt-2 max-w-2xl">
+                Analyze business values to detect unusual patterns and
+                calculate the current risk level.
+              </p>
+            </div>
+
+            <button
+              onClick={handleRiskReset}
+              className="px-4 py-2 rounded-xl text-sm font-semibold text-slate-600 bg-slate-100 hover:bg-slate-200 transition-colors cursor-pointer"
+            >
+              Reset
+            </button>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div>
+              <label className="block text-sm font-semibold text-slate-700 mb-1.5">
+                Quantity
+              </label>
+
+              <input
+                type="number"
+                value={riskQuantity}
+                onChange={(e) => setRiskQuantity(e.target.value)}
+                placeholder="e.g. 100"
+                className="w-full px-4 py-3 rounded-xl border border-slate-200 bg-white outline-none focus:ring-2 focus:ring-blue-500"
+              />
+            </div>
+
+            <div>
+              <label className="block text-sm font-semibold text-slate-700 mb-1.5">
+                Revenue
+              </label>
+
+              <input
+                type="number"
+                value={riskRevenue}
+                onChange={(e) => setRiskRevenue(e.target.value)}
+                placeholder="e.g. 50000"
+                className="w-full px-4 py-3 rounded-xl border border-slate-200 bg-white outline-none focus:ring-2 focus:ring-blue-500"
+              />
+            </div>
+
+            <div>
+              <label className="block text-sm font-semibold text-slate-700 mb-1.5">
+                Expense
+              </label>
+
+              <input
+                type="number"
+                value={riskExpense}
+                onChange={(e) => setRiskExpense(e.target.value)}
+                placeholder="e.g. 30000"
+                className="w-full px-4 py-3 rounded-xl border border-slate-200 bg-white outline-none focus:ring-2 focus:ring-blue-500"
+              />
+            </div>
+          </div>
+
+          <button
+            onClick={handleRiskAnalysis}
+            disabled={riskLoading}
+            className="w-full mt-6 py-3.5 rounded-xl bg-blue-700 text-white font-bold hover:bg-blue-800 disabled:opacity-60 transition-colors cursor-pointer"
+          >
+            {riskLoading ? "Analyzing Risk..." : "Analyze Risk"}
+          </button>
+
+          {riskError && (
+            <div className="mt-5 rounded-xl bg-red-50 border border-red-200 px-4 py-3 text-sm font-semibold text-red-700">
+              {riskError}
+            </div>
+          )}
+
+          {riskResult && (
+            <div className="mt-8">
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                <div className="rounded-2xl bg-slate-50 border border-slate-200 p-5">
+                  <p className="text-sm text-slate-500">
+                    Predicted Profit
+                  </p>
+
+                  <p className="text-2xl font-black text-slate-900 mt-2">
+                    ₹{riskResult.predicted_profit.toLocaleString()}
+                  </p>
+                </div>
+
+                <div className="rounded-2xl bg-slate-50 border border-slate-200 p-5">
+                  <p className="text-sm text-slate-500">
+                    Anomaly Detection
+                  </p>
+
+                  <p
+                    className={`text-2xl font-black mt-2 ${
+                      riskResult.anomaly_detected
+                        ? "text-red-600"
+                        : "text-green-600"
+                    }`}
+                  >
+                    {riskResult.anomaly_detected
+                      ? "Detected"
+                      : "Normal"}
+                  </p>
+                </div>
+
+                <div className="rounded-2xl bg-blue-50 border border-blue-100 p-5">
+                  <p className="text-sm text-slate-500">
+                    Risk Score
+                  </p>
+
+                  <p className="text-2xl font-black text-blue-700 mt-2">
+                    {riskResult.risk_score}/100
+                  </p>
+                </div>
+
+                <div className="rounded-2xl bg-slate-50 border border-slate-200 p-5">
+                  <p className="text-sm text-slate-500">
+                    Risk Level
+                  </p>
+
+                  <span
+                    className={`inline-block mt-2 px-4 py-2 rounded-full text-sm font-black ${riskLevelStyle}`}
+                  >
+                    {riskResult.risk_level}
+                  </span>
+                </div>
+              </div>
+
+              <div className="mt-6 rounded-2xl border border-slate-200 p-5">
+                <div className="flex justify-between text-sm font-semibold text-slate-600 mb-2">
+                  <span>Risk Score</span>
+                  <span>{riskResult.risk_score}/100</span>
+                </div>
+
+                <div className="h-4 bg-slate-100 rounded-full overflow-hidden">
+                  <div
+                    className="h-full bg-blue-600 rounded-full transition-all duration-500"
+                    style={{
+                      width: `${Math.min(
+                        100,
+                        Math.max(0, riskResult.risk_score)
+                      )}%`,
+                    }}
+                  />
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+
+        <div className="bg-white rounded-3xl border border-slate-200 shadow-sm p-6 sm:p-8">
           <div className="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-3 mb-8">
             <div>
               <p className="text-sm font-bold text-blue-700">
@@ -159,7 +714,7 @@ export default function DashboardPage() {
             </div>
 
             <button
-              onClick={handleReset}
+              onClick={handleWhatIfReset}
               className="px-4 py-2 rounded-xl text-sm font-semibold text-slate-600 bg-slate-100 hover:bg-slate-200 transition-colors cursor-pointer"
             >
               Reset
@@ -167,7 +722,6 @@ export default function DashboardPage() {
           </div>
 
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-
             <div className="rounded-2xl bg-slate-50 border border-slate-200 p-5">
               <div className="mb-5">
                 <p className="text-xs font-bold uppercase tracking-wider text-slate-400">
@@ -180,7 +734,6 @@ export default function DashboardPage() {
               </div>
 
               <div className="space-y-4">
-
                 <div>
                   <label className="block text-sm font-semibold text-slate-700 mb-1.5">
                     Quantity
@@ -222,7 +775,6 @@ export default function DashboardPage() {
                     className="w-full px-4 py-3 rounded-xl border border-slate-200 bg-white outline-none focus:ring-2 focus:ring-blue-500"
                   />
                 </div>
-
               </div>
             </div>
 
@@ -238,7 +790,6 @@ export default function DashboardPage() {
               </div>
 
               <div className="space-y-4">
-
                 <div>
                   <label className="block text-sm font-semibold text-slate-700 mb-1.5">
                     New Quantity
@@ -280,10 +831,8 @@ export default function DashboardPage() {
                     className="w-full px-4 py-3 rounded-xl border border-slate-200 bg-white outline-none focus:ring-2 focus:ring-blue-500"
                   />
                 </div>
-
               </div>
             </div>
-
           </div>
 
           <button
@@ -302,7 +851,6 @@ export default function DashboardPage() {
 
           {result && (
             <div className="mt-8">
-
               <div className="flex items-center justify-between mb-4">
                 <div>
                   <p className="text-sm font-bold text-blue-700">
@@ -332,7 +880,6 @@ export default function DashboardPage() {
               </div>
 
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-
                 <div className="rounded-2xl bg-slate-50 border border-slate-200 p-5">
                   <p className="text-sm text-slate-500">
                     Current Predicted Profit
@@ -371,38 +918,32 @@ export default function DashboardPage() {
                     ₹{result.profit_difference.toLocaleString()}
                   </p>
                 </div>
-
               </div>
 
               <div className="mt-6 rounded-2xl border border-slate-200 p-5">
-
                 <div className="flex justify-between text-sm font-semibold text-slate-600 mb-2">
                   <span>Current Profit</span>
                   <span>New Profit</span>
                 </div>
 
                 <div className="h-4 bg-slate-100 rounded-full overflow-hidden">
-
                   <div
                     className="h-full bg-blue-600 rounded-full transition-all duration-500"
                     style={{
-                      width: `${
-                        Math.max(
-                          5,
-                          Math.min(
-                            100,
-                            (result.current_predicted_profit /
-                              Math.max(
-                                result.current_predicted_profit,
-                                result.new_predicted_profit
-                              )) *
-                              100
-                          )
+                      width: `${Math.max(
+                        5,
+                        Math.min(
+                          100,
+                          (result.current_predicted_profit /
+                            Math.max(
+                              result.current_predicted_profit,
+                              result.new_predicted_profit
+                            )) *
+                            100
                         )
-                      }%`,
+                      )}%`,
                     }}
                   />
-
                 </div>
 
                 <div className="mt-3 text-center">
@@ -422,12 +963,9 @@ export default function DashboardPage() {
                     {result.result}
                   </span>
                 </div>
-
               </div>
-
             </div>
           )}
-
         </div>
       </div>
     </div>
