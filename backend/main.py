@@ -11,6 +11,12 @@ ROOT_DIR = Path(__file__).resolve().parent.parent
 sys.path.append(str(ROOT_DIR))
 
 from backend.features import prepare_features
+from agents.analytics_agent import AnalyticsAgent
+from agents.risk_agent import RiskAgent
+
+
+analytics_agent = AnalyticsAgent()
+risk_agent = RiskAgent()
 
 app = FastAPI(
     title="EVORA API",
@@ -47,6 +53,16 @@ except Exception as e:
     print(f"Warning: Could not load anomaly model: {e}")
 
 
+# ---------------------------------------------------------------
+# Helper: convert numpy values to plain Python types for JSON.
+# Fixes "TypeError: 'numpy.bool' object is not iterable" errors.
+# ---------------------------------------------------------------
+def to_python(value):
+    if hasattr(value, "item"):
+        return value.item()
+    return value
+
+
 @app.get("/")
 def root():
     return {
@@ -67,20 +83,13 @@ def health():
 async def upload_csv(file: UploadFile = File(...)):
 
     if not file.filename:
-        raise HTTPException(
-            status_code=400,
-            detail="No file selected."
-        )
+        raise HTTPException(status_code=400, detail="No file selected.")
 
     if not file.filename.lower().endswith(".csv"):
-        raise HTTPException(
-            status_code=400,
-            detail="Please upload a CSV file."
-        )
+        raise HTTPException(status_code=400, detail="Please upload a CSV file.")
 
     try:
         contents = await file.read()
-
         df = pd.read_csv(io.BytesIO(contents))
 
         if df.empty:
@@ -96,21 +105,12 @@ async def upload_csv(file: UploadFile = File(...)):
         print("Rows:", len(df))
         print("Columns:", list(df.columns))
 
-        df.columns = [
-            str(col).strip()
-            for col in df.columns
-        ]
+        df.columns = [str(col).strip() for col in df.columns]
 
-        required_columns = [
-            "Quantity",
-            "Revenue",
-            "Expense"
-        ]
+        required_columns = ["Quantity", "Revenue", "Expense"]
 
         missing_columns = [
-            col
-            for col in required_columns
-            if col not in df.columns
+            col for col in required_columns if col not in df.columns
         ]
 
         if missing_columns:
@@ -124,28 +124,11 @@ async def upload_csv(file: UploadFile = File(...)):
                 }
             )
 
-        df["Quantity"] = pd.to_numeric(
-            df["Quantity"],
-            errors="coerce"
-        )
+        df["Quantity"] = pd.to_numeric(df["Quantity"], errors="coerce")
+        df["Revenue"] = pd.to_numeric(df["Revenue"], errors="coerce")
+        df["Expense"] = pd.to_numeric(df["Expense"], errors="coerce")
 
-        df["Revenue"] = pd.to_numeric(
-            df["Revenue"],
-            errors="coerce"
-        )
-
-        df["Expense"] = pd.to_numeric(
-            df["Expense"],
-            errors="coerce"
-        )
-
-        df = df.dropna(
-            subset=[
-                "Quantity",
-                "Revenue",
-                "Expense"
-            ]
-        )
+        df = df.dropna(subset=["Quantity", "Revenue", "Expense"])
 
         if df.empty:
             raise HTTPException(
@@ -153,60 +136,28 @@ async def upload_csv(file: UploadFile = File(...)):
                 detail="No valid numeric data found in Quantity, Revenue and Expense columns."
             )
 
-        df["Profit"] = (
-            df["Revenue"] - df["Expense"]
-        )
+        df["Profit"] = df["Revenue"] - df["Expense"]
 
-        total_revenue = float(
-            df["Revenue"].sum()
-        )
-
-        total_expense = float(
-            df["Expense"].sum()
-        )
-
-        total_profit = float(
-            df["Profit"].sum()
-        )
-
-        total_sales = float(
-            df["Quantity"].sum()
-        )
-
-        average_revenue = float(
-            df["Revenue"].mean()
-        )
-
-        average_expense = float(
-            df["Expense"].mean()
-        )
-
-        average_profit = float(
-            df["Profit"].mean()
-        )
+        total_revenue = float(df["Revenue"].sum())
+        total_expense = float(df["Expense"].sum())
+        total_profit = float(df["Profit"].sum())
+        total_sales = float(df["Quantity"].sum())
+        average_revenue = float(df["Revenue"].mean())
+        average_expense = float(df["Expense"].mean())
+        average_profit = float(df["Profit"].mean())
 
         if total_revenue != 0:
-            profit_margin = (
-                total_profit /
-                total_revenue
-            ) * 100
+            profit_margin = (total_profit / total_revenue) * 100
         else:
             profit_margin = 0.0
 
         feature_df = prepare_features(
-            df[
-                [
-                    "Quantity",
-                    "Revenue",
-                    "Expense"
-                ]
-            ].copy()
+            df[["Quantity", "Revenue", "Expense"]].copy()
         )
 
         predicted_profit = None
 
         if model is not None:
-
             features = [
                 "Quantity",
                 "Revenue",
@@ -217,20 +168,13 @@ async def upload_csv(file: UploadFile = File(...)):
             ]
 
             missing_features = [
-                feature
-                for feature in features
+                feature for feature in features
                 if feature not in feature_df.columns
             ]
 
             if not missing_features:
-
-                prediction = model.predict(
-                    feature_df[features]
-                )
-
-                predicted_profit = float(
-                    prediction.mean()
-                )
+                prediction = model.predict(feature_df[features])
+                predicted_profit = float(prediction.mean())
 
         return {
             "success": True,
@@ -254,10 +198,8 @@ async def upload_csv(file: UploadFile = File(...)):
         raise
 
     except Exception as e:
-
         print("\nCSV processing error:")
         print(str(e))
-
         raise HTTPException(
             status_code=500,
             detail={
@@ -274,9 +216,7 @@ class ProfitPredictionRequest(BaseModel):
 
 
 @app.post("/ml/predict-profit")
-def predict_profit(
-    data: ProfitPredictionRequest
-):
+def predict_profit(data: ProfitPredictionRequest):
 
     if model is None:
         raise HTTPException(
@@ -285,14 +225,11 @@ def predict_profit(
         )
 
     try:
-
-        df = pd.DataFrame([
-            {
-                "Quantity": data.Quantity,
-                "Revenue": data.Revenue,
-                "Expense": data.Expense
-            }
-        ])
+        df = pd.DataFrame([{
+            "Quantity": data.Quantity,
+            "Revenue": data.Revenue,
+            "Expense": data.Expense
+        }])
 
         df = prepare_features(df)
 
@@ -306,9 +243,7 @@ def predict_profit(
         ]
 
         missing_features = [
-            feature
-            for feature in features
-            if feature not in df.columns
+            feature for feature in features if feature not in df.columns
         ]
 
         if missing_features:
@@ -320,13 +255,8 @@ def predict_profit(
                 }
             )
 
-        prediction = model.predict(
-            df[features]
-        )
-
-        predicted_profit = float(
-            prediction[0]
-        )
+        prediction = model.predict(df[features])
+        predicted_profit = float(prediction[0])
 
         return {
             "success": True,
@@ -337,10 +267,8 @@ def predict_profit(
         raise
 
     except Exception as e:
-
         print("\nML prediction error:")
         print(str(e))
-
         raise HTTPException(
             status_code=500,
             detail={
@@ -357,9 +285,7 @@ class RiskAnalysisRequest(BaseModel):
 
 
 @app.post("/analyze-risk")
-def analyze_risk(
-    data: RiskAnalysisRequest
-):
+def analyze_risk(data: RiskAnalysisRequest):
 
     if model is None:
         raise HTTPException(
@@ -374,14 +300,11 @@ def analyze_risk(
         )
 
     try:
-
-        df = pd.DataFrame([
-            {
-                "Quantity": data.Quantity,
-                "Revenue": data.Revenue,
-                "Expense": data.Expense
-            }
-        ])
+        df = pd.DataFrame([{
+            "Quantity": data.Quantity,
+            "Revenue": data.Revenue,
+            "Expense": data.Expense
+        }])
 
         df = prepare_features(df)
 
@@ -394,23 +317,15 @@ def analyze_risk(
             "Expense_per_Unit"
         ]
 
-        prediction = model.predict(
-            df[features]
-        )
+        prediction = model.predict(df[features])
+        predicted_profit = float(prediction[0])
 
-        predicted_profit = float(
-            prediction[0]
-        )
+        anomaly_prediction = anomaly_model.predict(df[features])[0]
 
-        anomaly_prediction = anomaly_model.predict(
-            df[features]
-        )[0]
+        # FIX: numpy bool -> python bool
+        anomaly_detected = bool(anomaly_prediction == -1)
 
-        anomaly_detected = anomaly_prediction == -1
-
-        profit_margin = float(
-            df["Profit_Margin"].iloc[0]
-        )
+        profit_margin = float(df["Profit_Margin"].iloc[0])
 
         risk_score = 0
 
@@ -429,10 +344,8 @@ def analyze_risk(
         if predicted_profit < 0:
             risk_score += 15
 
-        risk_score = max(
-            0,
-            min(100, risk_score)
-        )
+        # FIX: numpy int -> python int
+        risk_score = int(max(0, min(100, risk_score)))
 
         if risk_score <= 30:
             risk_level = "LOW"
@@ -441,22 +354,29 @@ def analyze_risk(
         else:
             risk_level = "HIGH"
 
+        risk_analysis = risk_agent.analyze(
+            predicted_profit=predicted_profit,
+            anomaly_detected=anomaly_detected,
+            risk_score=risk_score,
+            risk_level=risk_level
+        )
+
+        # FIX: every value returned is a plain Python type
         return {
             "success": True,
-            "predicted_profit": predicted_profit,
+            "predicted_profit": float(predicted_profit),
             "anomaly_detected": bool(anomaly_detected),
-            "risk_score": risk_score,
-            "risk_level": risk_level
+            "risk_score": int(risk_score),
+            "risk_level": str(risk_level),
+            "risk_analysis": risk_analysis
         }
 
     except HTTPException:
         raise
 
     except Exception as e:
-
         print("\nRisk analysis error:")
         print(str(e))
-
         raise HTTPException(
             status_code=500,
             detail={
@@ -464,6 +384,7 @@ def analyze_risk(
                 "error": str(e)
             }
         )
+
 
 class WhatIfRequest(BaseModel):
     current_quantity: float
@@ -507,13 +428,8 @@ def what_if_analysis(data: WhatIfRequest):
         "Expense_per_Unit"
     ]
 
-    current_profit = model.predict(
-        current_df[features]
-    )[0]
-
-    new_profit = model.predict(
-        new_df[features]
-    )[0]
+    current_profit = model.predict(current_df[features])[0]
+    new_profit = model.predict(new_df[features])[0]
 
     profit_difference = new_profit - current_profit
 
@@ -531,3 +447,78 @@ def what_if_analysis(data: WhatIfRequest):
         "profit_difference": round(float(profit_difference), 2),
         "result": result
     }
+
+
+@app.post("/analytics")
+async def analytics(file: UploadFile = File(...)):
+
+    if not file.filename:
+        raise HTTPException(status_code=400, detail="No file selected.")
+
+    if not file.filename.lower().endswith(".csv"):
+        raise HTTPException(
+            status_code=400,
+            detail="Only CSV files are supported."
+        )
+
+    try:
+        contents = await file.read()
+        df = pd.read_csv(io.BytesIO(contents))
+
+        if df.empty:
+            raise HTTPException(
+                status_code=400,
+                detail="The uploaded CSV file is empty."
+            )
+
+        df.columns = [str(col).strip() for col in df.columns]
+
+        required_columns = ["Revenue", "Expense"]
+
+        missing_columns = [
+            column for column in required_columns
+            if column not in df.columns
+        ]
+
+        if missing_columns:
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "message": "Required columns are missing.",
+                    "missing_columns": missing_columns,
+                    "required_columns": required_columns,
+                    "available_columns": list(df.columns)
+                }
+            )
+
+        df["Revenue"] = pd.to_numeric(df["Revenue"], errors="coerce")
+        df["Expense"] = pd.to_numeric(df["Expense"], errors="coerce")
+
+        df = df.dropna(subset=["Revenue", "Expense"])
+
+        if df.empty:
+            raise HTTPException(
+                status_code=400,
+                detail="No valid numeric data found."
+            )
+
+        result = analytics_agent.analyze(df)
+
+        return {
+            "success": True,
+            "analysis": result
+        }
+
+    except HTTPException:
+        raise
+
+    except Exception as e:
+        print("\nAnalytics error:")
+        print(str(e))
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "message": "Analytics failed.",
+                "error": str(e)
+            }
+        )

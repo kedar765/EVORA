@@ -22,6 +22,17 @@ type UploadResult = {
   predicted_profit: number | null;
 };
 
+type AnalyticsResult = {
+  success: boolean;
+  analysis: {
+    total_revenue: number;
+    total_expense: number;
+    total_profit: number;
+    profit_margin: number;
+    insights: string[];
+  };
+};
+
 type ProfitPredictionResult = {
   success: boolean;
   predicted_profit: number;
@@ -33,6 +44,13 @@ type RiskAnalysisResult = {
   anomaly_detected: boolean;
   risk_score: number;
   risk_level: string;
+  risk_analysis: {
+    risk_level: string;
+    risk_score: number;
+    predicted_profit: number;
+    anomaly_detected: boolean;
+    reasons: string[];
+  };
 };
 
 type WhatIfResult = {
@@ -51,6 +69,11 @@ export default function DashboardPage() {
   const [uploadResult, setUploadResult] = useState<UploadResult | null>(null);
   const [uploadLoading, setUploadLoading] = useState(false);
   const [uploadError, setUploadError] = useState("");
+
+  const [analyticsResult, setAnalyticsResult] =
+    useState<AnalyticsResult | null>(null);
+  const [analyticsLoading, setAnalyticsLoading] = useState(false);
+  const [analyticsError, setAnalyticsError] = useState("");
 
   const [profitQuantity, setProfitQuantity] = useState("");
   const [profitRevenue, setProfitRevenue] = useState("");
@@ -102,6 +125,8 @@ export default function DashboardPage() {
   const handleUpload = async () => {
     setUploadError("");
     setUploadResult(null);
+    setAnalyticsResult(null);
+    setAnalyticsError("");
 
     if (!uploadFile) {
       setUploadError("Please select a CSV file.");
@@ -109,35 +134,69 @@ export default function DashboardPage() {
     }
 
     setUploadLoading(true);
+    setAnalyticsLoading(true);
 
     try {
-      const formData = new FormData();
-      formData.append("file", uploadFile);
+      const uploadFormData = new FormData();
+      uploadFormData.append("file", uploadFile);
 
-      const response = await fetch("http://127.0.0.1:8000/upload", {
-        method: "POST",
-        body: formData,
-      });
+      const uploadResponse = await fetch(
+        "http://127.0.0.1:8000/upload",
+        {
+          method: "POST",
+          body: uploadFormData,
+        }
+      );
 
-      const data = await response.json();
+      const uploadData = await uploadResponse.json();
 
-      if (!response.ok) {
+      if (!uploadResponse.ok) {
         throw new Error(
-          typeof data.detail === "string"
-            ? data.detail
-            : data.detail?.message || "Upload failed."
+          typeof uploadData.detail === "string"
+            ? uploadData.detail
+            : uploadData.detail?.message || "Upload failed."
         );
       }
 
-      setUploadResult(data);
+      setUploadResult(uploadData);
+
+      const analyticsFormData = new FormData();
+      analyticsFormData.append("file", uploadFile);
+
+      const analyticsResponse = await fetch(
+        "http://127.0.0.1:8000/analytics",
+        {
+          method: "POST",
+          body: analyticsFormData,
+        }
+      );
+
+      const analyticsData = await analyticsResponse.json();
+
+      if (!analyticsResponse.ok) {
+        throw new Error(
+          typeof analyticsData.detail === "string"
+            ? analyticsData.detail
+            : analyticsData.detail?.message ||
+                "Analytics analysis failed."
+        );
+      }
+
+      setAnalyticsResult(analyticsData);
     } catch (err) {
-      setUploadError(
+      const message =
         err instanceof Error
           ? err.message
-          : "Unable to connect to EVORA backend."
-      );
+          : "Unable to connect to EVORA backend.";
+
+      if (!uploadResult) {
+        setUploadError(message);
+      } else {
+        setAnalyticsError(message);
+      }
     } finally {
       setUploadLoading(false);
+      setAnalyticsLoading(false);
     }
   };
 
@@ -266,20 +325,23 @@ export default function DashboardPage() {
     setLoading(true);
 
     try {
-      const response = await fetch("http://127.0.0.1:8000/what-if", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          current_quantity: Number(currentQuantity),
-          current_revenue: Number(currentRevenue),
-          current_expense: Number(currentExpense),
-          new_quantity: Number(newQuantity),
-          new_revenue: Number(newRevenue),
-          new_expense: Number(newExpense),
-        }),
-      });
+      const response = await fetch(
+        "http://127.0.0.1:8000/what-if",
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            current_quantity: Number(currentQuantity),
+            current_revenue: Number(currentRevenue),
+            current_expense: Number(currentExpense),
+            new_quantity: Number(newQuantity),
+            new_revenue: Number(newRevenue),
+            new_expense: Number(newExpense),
+          }),
+        }
+      );
 
       const data = await response.json();
 
@@ -374,6 +436,8 @@ export default function DashboardPage() {
                 setUploadFile(e.target.files?.[0] || null);
                 setUploadResult(null);
                 setUploadError("");
+                setAnalyticsResult(null);
+                setAnalyticsError("");
               }}
               className="flex-1 px-4 py-3 rounded-xl border border-slate-200 bg-white"
             />
@@ -383,7 +447,7 @@ export default function DashboardPage() {
               disabled={uploadLoading}
               className="px-6 py-3 rounded-xl bg-blue-700 text-white font-bold hover:bg-blue-800 disabled:opacity-60 transition-colors cursor-pointer"
             >
-              {uploadLoading ? "Uploading..." : "Upload CSV"}
+              {uploadLoading ? "Analyzing..." : "Upload CSV"}
             </button>
           </div>
 
@@ -446,6 +510,112 @@ export default function DashboardPage() {
                 <span className="font-semibold">
                   {uploadResult.metrics.profit_margin.toFixed(2)}%
                 </span>
+              </div>
+            </div>
+          )}
+
+          {analyticsLoading && (
+            <div className="mt-6 rounded-2xl bg-blue-50 border border-blue-100 p-5">
+              <p className="text-sm font-semibold text-blue-700">
+                EVORA Analytics Agent is analyzing your business data...
+              </p>
+            </div>
+          )}
+
+          {analyticsError && (
+            <div className="mt-6 rounded-xl bg-red-50 border border-red-200 px-4 py-3 text-sm font-semibold text-red-700">
+              {analyticsError}
+            </div>
+          )}
+
+          {analyticsResult && (
+            <div className="mt-8">
+              <div className="mb-5">
+                <p className="text-sm font-bold text-blue-700">
+                  AI Business Intelligence
+                </p>
+
+                <h3 className="text-xl sm:text-2xl font-black text-slate-900 mt-1">
+                  Analytics Agent Result
+                </h3>
+
+                <p className="text-sm text-slate-500 mt-1">
+                  EVORA analyzed the uploaded business data.
+                </p>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                <div className="rounded-2xl bg-slate-50 border border-slate-200 p-5">
+                  <p className="text-sm text-slate-500">
+                    Total Revenue
+                  </p>
+
+                  <p className="text-2xl font-black text-slate-900 mt-2">
+                    ₹
+                    {analyticsResult.analysis.total_revenue.toLocaleString()}
+                  </p>
+                </div>
+
+                <div className="rounded-2xl bg-slate-50 border border-slate-200 p-5">
+                  <p className="text-sm text-slate-500">
+                    Total Expense
+                  </p>
+
+                  <p className="text-2xl font-black text-slate-900 mt-2">
+                    ₹
+                    {analyticsResult.analysis.total_expense.toLocaleString()}
+                  </p>
+                </div>
+
+                <div className="rounded-2xl bg-blue-50 border border-blue-100 p-5">
+                  <p className="text-sm text-slate-500">
+                    Total Profit
+                  </p>
+
+                  <p className="text-2xl font-black text-blue-700 mt-2">
+                    ₹
+                    {analyticsResult.analysis.total_profit.toLocaleString()}
+                  </p>
+                </div>
+
+                <div className="rounded-2xl bg-green-50 border border-green-100 p-5">
+                  <p className="text-sm text-slate-500">
+                    Profit Margin
+                  </p>
+
+                  <p className="text-2xl font-black text-green-700 mt-2">
+                    {analyticsResult.analysis.profit_margin.toFixed(2)}%
+                  </p>
+                </div>
+              </div>
+
+              <div className="mt-6 rounded-2xl bg-blue-50 border border-blue-100 p-5">
+                <div className="flex items-center gap-2 mb-4">
+                  <span className="text-xl">💡</span>
+
+                  <h4 className="text-lg font-black text-slate-900">
+                    Business Insights
+                  </h4>
+                </div>
+
+                <div className="space-y-3">
+                  {analyticsResult.analysis.insights.map(
+                    (insight, index) => (
+                      <div
+                        key={index}
+                        className="flex items-start gap-3"
+                      >
+                        <span className="text-blue-700 font-black mt-0.5">
+                          •
+                        </span>
+
+                        <p className="text-sm font-semibold text-slate-700">
+                          {insight}
+                        </p>
+                      </div>
+                    )
+                  )}
+                </div>
               </div>
             </div>
           )}
@@ -690,6 +860,35 @@ export default function DashboardPage() {
                       )}%`,
                     }}
                   />
+                </div>
+              </div>
+
+              <div className="mt-6 rounded-2xl bg-blue-50 border border-blue-100 p-5">
+                <div className="flex items-center gap-2 mb-4">
+                  <span className="text-xl">🛡️</span>
+
+                  <h4 className="text-lg font-black text-slate-900">
+                    Risk Assessment
+                  </h4>
+                </div>
+
+                <div className="space-y-3">
+                  {riskResult.risk_analysis.reasons.map(
+                    (reason, index) => (
+                      <div
+                        key={index}
+                        className="flex items-start gap-3"
+                      >
+                        <span className="text-blue-700 font-black mt-0.5">
+                          •
+                        </span>
+
+                        <p className="text-sm font-semibold text-slate-700">
+                          {reason}
+                        </p>
+                      </div>
+                    )
+                  )}
                 </div>
               </div>
             </div>
