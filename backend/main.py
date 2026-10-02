@@ -464,3 +464,70 @@ def analyze_risk(
                 "error": str(e)
             }
         )
+
+class WhatIfRequest(BaseModel):
+    current_quantity: float
+    current_revenue: float
+    current_expense: float
+    new_quantity: float
+    new_revenue: float
+    new_expense: float
+
+
+@app.post("/what-if")
+def what_if_analysis(data: WhatIfRequest):
+
+    if model is None:
+        raise HTTPException(
+            status_code=500,
+            detail="Profit ML model could not be loaded."
+        )
+
+    current_df = pd.DataFrame([{
+        "Quantity": data.current_quantity,
+        "Revenue": data.current_revenue,
+        "Expense": data.current_expense
+    }])
+
+    new_df = pd.DataFrame([{
+        "Quantity": data.new_quantity,
+        "Revenue": data.new_revenue,
+        "Expense": data.new_expense
+    }])
+
+    current_df = prepare_features(current_df)
+    new_df = prepare_features(new_df)
+
+    features = [
+        "Quantity",
+        "Revenue",
+        "Expense",
+        "Profit_Margin",
+        "Revenue_per_Unit",
+        "Expense_per_Unit"
+    ]
+
+    current_profit = model.predict(
+        current_df[features]
+    )[0]
+
+    new_profit = model.predict(
+        new_df[features]
+    )[0]
+
+    profit_difference = new_profit - current_profit
+
+    if profit_difference > 0:
+        result = "Profit may increase"
+    elif profit_difference < 0:
+        result = "Profit may decrease"
+    else:
+        result = "No significant change"
+
+    return {
+        "success": True,
+        "current_predicted_profit": round(float(current_profit), 2),
+        "new_predicted_profit": round(float(new_profit), 2),
+        "profit_difference": round(float(profit_difference), 2),
+        "result": result
+    }
