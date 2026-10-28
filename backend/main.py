@@ -155,30 +155,89 @@ async def upload_csv(file: UploadFile = File(...)):
             df[["Quantity", "Revenue", "Expense"]].copy()
         )
 
+        features = [
+            "Quantity",
+            "Revenue",
+            "Expense",
+            "Profit_Margin",
+            "Revenue_per_Unit",
+            "Expense_per_Unit"
+        ]
+
+        # 1. Profit Prediction (Random Forest)
         predicted_profit = None
-
         if model is not None:
-            features = [
-                "Quantity",
-                "Revenue",
-                "Expense",
-                "Profit_Margin",
-                "Revenue_per_Unit",
-                "Expense_per_Unit"
-            ]
-
             missing_features = [
                 feature for feature in features
                 if feature not in feature_df.columns
             ]
-
             if not missing_features:
                 prediction = model.predict(feature_df[features])
                 predicted_profit = float(prediction.mean())
 
+        # 2. Anomaly Detection (Isolation Forest)
+        anomaly_detected = False
+        anomaly_count = 0
+        anomaly_indices = []
+        if anomaly_model is not None:
+            try:
+                anomaly_predictions = anomaly_model.predict(feature_df[features])
+                anomaly_count = int((anomaly_predictions == -1).sum())
+                anomaly_detected = bool(anomaly_count > 0)
+                anomaly_indices = [int(i) for i, pred in enumerate(anomaly_predictions) if pred == -1]
+            except Exception as ae:
+                print(f"Warning: Anomaly detection error: {ae}")
+
+        # 3. Risk Calculation
+        risk_score = 0
+        if anomaly_detected:
+            risk_score += 60
+        else:
+            risk_score += 10
+
+        if profit_margin < 0:
+            risk_score += 25
+        elif profit_margin < 10:
+            risk_score += 15
+        elif profit_margin < 20:
+            risk_score += 5
+
+        if predicted_profit is not None and predicted_profit < 0:
+            risk_score += 15
+
+        risk_score = int(max(0, min(100, risk_score)))
+
+        if risk_score <= 30:
+            risk_level = "LOW"
+        elif risk_score <= 60:
+            risk_level = "MEDIUM"
+        else:
+            risk_level = "HIGH"
+
+        # 4. Risk Agent Analysis
+        risk_analysis = risk_agent.analyze(
+            predicted_profit=predicted_profit if predicted_profit is not None else total_profit,
+            anomaly_detected=anomaly_detected,
+            risk_score=risk_score,
+            risk_level=risk_level
+        )
+
+        # 5. Analytics Agent Analysis
+        analytics_result = analytics_agent.analyze(df)
+
+        # 6. Overall Business Status Determination
+        if risk_level == "LOW" and total_profit > 0:
+            business_status = "Healthy & Profitable"
+        elif risk_level == "MEDIUM":
+            business_status = "Moderate Risk — Review Recommended"
+        elif total_profit < 0:
+            business_status = "Critical — Operating at a Loss"
+        else:
+            business_status = "High Risk — Anomalies Detected"
+
         return {
             "success": True,
-            "message": "CSV processed successfully.",
+            "message": "CSV processed and analyzed successfully.",
             "filename": file.filename,
             "rows_processed": int(len(df)),
             "metrics": {
@@ -191,7 +250,15 @@ async def upload_csv(file: UploadFile = File(...)):
                 "average_profit": average_profit,
                 "profit_margin": profit_margin
             },
-            "predicted_profit": predicted_profit
+            "predicted_profit": predicted_profit,
+            "anomaly_detected": anomaly_detected,
+            "anomaly_count": anomaly_count,
+            "anomaly_indices": anomaly_indices,
+            "risk_score": risk_score,
+            "risk_level": risk_level,
+            "risk_analysis": risk_analysis,
+            "analytics": analytics_result,
+            "business_status": business_status
         }
 
     except HTTPException:

@@ -11,7 +11,7 @@
 <div align="center">
 
 <img
-  src="https://readme-typing-svg.demolab.com?font=Montserrat&weight=600&size=20&duration=2800&pause=900&color=6C5CE7&center=true&vCenter=true&width=1000&lines=%F0%9F%93%8A+Transform+Business+Data+into+Insights;%E2%9A%A0%EF%B8%8F+Detect+Risk+with+AI+and+Machine+Learning;%F0%9F%94%AE+Predict+What+May+Happen+Next;%F0%9F%A4%96+Reason+with+Multi-Agent+AI;%F0%9F%A7%AA+Evaluate+What-if+Scenarios;%F0%9F%8E%AF+Optimize+Decisions+with+Evidence"
+  src="https://readme-typing-svg.demolab.com?font=Montserrat&weight=600&size=20&duration=2800&pause=900&color=6C5CE7&center=true&vCenter=true&width=1000&lines=%F0%9F%93%8A+Transform+Business+Data+into+Insights;%E2%9A%A0%EF%B8%8F+Detect+Risk+with+AI+and+Machine+Learning;%F0%9F%94%AE+Predict+Profitability+with+Random+Forest;%F0%9F%A4%96+Reason+with+Multi-Agent+AI;%F0%9F%A7%AA+Evaluate+What-if+Scenarios;%F0%9F%8E%AF+Optimize+Decisions+with+Evidence"
   alt="EVORA animated tagline"
 />
 
@@ -19,13 +19,12 @@
 
 <br/>
 
-[![Python](https://img.shields.io/badge/Python-3776AB?style=for-the-badge\&logo=python\&logoColor=white)](https://www.python.org/)
-[![FastAPI](https://img.shields.io/badge/FastAPI-009688?style=for-the-badge\&logo=fastapi\&logoColor=white)](https://fastapi.tiangolo.com/)
-[![Next.js](https://img.shields.io/badge/Next.js-000000?style=for-the-badge\&logo=nextdotjs\&logoColor=white)](https://nextjs.org/)
-[![React](https://img.shields.io/badge/React-61DAFB?style=for-the-badge\&logo=react\&logoColor=black)](https://react.dev/)
-[![XGBoost](https://img.shields.io/badge/XGBoost-ML%20Engine-EB5E28?style=for-the-badge)](https://xgboost.readthedocs.io/)
-[![LangGraph](https://img.shields.io/badge/LangGraph-Multi--Agent-6C5CE7?style=for-the-badge)](https://www.langchain.com/langgraph)
-![Status](https://img.shields.io/badge/Status-Under%20Active%20Development-F5A623?style=for-the-badge)
+[![Python](https://img.shields.io/badge/Python-3.11+-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://www.python.org/)
+[![FastAPI](https://img.shields.io/badge/FastAPI-009688?style=for-the-badge&logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
+[![Next.js](https://img.shields.io/badge/Next.js-16+-000000?style=for-the-badge&logo=nextdotjs&logoColor=white)](https://nextjs.org/)
+[![React](https://img.shields.io/badge/React-19-61DAFB?style=for-the-badge&logo=react&logoColor=black)](https://react.dev/)
+[![Scikit-Learn](https://img.shields.io/badge/Scikit--Learn-ML%20Engine-F7931E?style=for-the-badge&logo=scikit-learn&logoColor=white)](https://scikit-learn.org/)
+[![Status](https://img.shields.io/badge/Status-Implemented%20%26%20Verified-00B894?style=for-the-badge)](#project-status)
 
 <br/>
 
@@ -36,759 +35,326 @@
 ---
 
 > ⚠️ **EVORA does not execute business decisions.**
-> It analyzes data, evaluates alternatives, and returns evidence-based recommendations — the final decision always stays with the user.
+> It analyzes data, evaluates alternatives, and returns evidence-based recommendations — the final decision always stays with the human user.
 
 ---
 
 ## 📑 Table of Contents
 
 * [Overview](#overview)
-* [Project Goal](#project-goal)
-* [Core Questions](#core-questions)
-* [Key Features](#key-features)
-* [AI Agents](#ai-agents)
-* [Machine Learning vs AI Agents](#machine-learning-vs-ai-agents)
-* [Risk Analysis](#risk-analysis)
-* [Workflow](#workflow)
+* [Current Implementation vs Planned Features](#current-implementation-vs-planned-features)
+* [Core Questions & Agent Architecture](#core-questions--agent-architecture)
+* [Machine Learning Services](#machine-learning-services)
+* [Risk Analysis & Anomaly Detection](#risk-analysis--anomaly-detection)
+* [API Endpoints](#api-endpoints)
 * [System Architecture](#system-architecture)
 * [Technology Stack](#technology-stack)
 * [Project Structure](#project-structure)
-* [Input Data](#input-data)
-* [Business Metrics](#business-metrics)
-* [What-if Analysis](#what-if-analysis)
-* [Example Walkthrough](#example-walkthrough)
-* [Reliability and Limitations](#reliability-and-limitations)
-* [Evaluation](#evaluation)
-* [Project Status](#project-status)
+* [What-if Analysis & Decision Support](#what-if-analysis--decision-support)
+* [Evaluation & Verification](#evaluation--verification)
+* [Getting Started](#getting-started)
 
 ---
 
 ## 🧭 Overview
 
-**EVORA** (Enterprise Vision Optimizing Reasoning Assistant) is an AI-powered **Business Intelligence and Decision Optimization System**.
+**EVORA** (Enterprise Vision Optimizing Reasoning Assistant) is a professional AI-powered **Business Intelligence and Decision Support System**.
 
-It analyzes business data, surfaces risks, evaluates possible actions, and recommends the most suitable one based on available evidence.
+It analyzes business data, surfaces operational risks, evaluates alternative scenarios, and provides decision-support information while keeping the final decision with the human user.
 
-EVORA combines:
+### Key Architectural Principle: Agent-Centric Dashboard
 
-* 📊 Business Intelligence
-* 🤖 Machine Learning
-* 🚨 Anomaly Detection
-* 🧠 Multi-Agent AI
-* 🔮 What-if Analysis
-* 🎯 Decision Optimization
+In EVORA, machine learning models and analytical routines are **underlying capabilities/services**, not disconnected demo widgets:
 
-### The Problem
+* **Analytics Agent** → uses business metrics & profit trends to explain *"What happened?"*
+* **Risk Agent** → uses anomaly detection (Isolation Forest), risk scoring, and profit predictions (Random Forest) to diagnose *"What is wrong?"*
+* **Decision Optimization Agent** *(Architecture prepared)* → uses analytics, risk assessments, and What-If scenario simulations to answer *"What should we do?"*
 
-Businesses generate large volumes of data such as:
+---
 
-`Sales • Revenue • Expenses • Products • Customers • Complaints • Delivery Performance`
+## ⚖️ Current Implementation vs Planned Features
 
-A traditional dashboard may show:
+| Capability | Status | Implementation Details |
+| :--- | :---: | :--- |
+| **CSV Business Data Ingestion** | ✅ **Implemented** | Multipart CSV upload, automated validation of Quantity, Revenue, Expense |
+| **Business Metrics Engine** | ✅ **Implemented** | Total/Average Revenue, Expense, Profit, Profit Margin calculation |
+| **Profit Prediction** | ✅ **Implemented** | Random Forest Regressor trained on unit metrics (`ml/profit_model.pkl`) |
+| **Anomaly Detection** | ✅ **Implemented** | Isolation Forest model for unusual pattern detection (`ml/anomaly_model.pkl`) |
+| **Risk Analysis Engine** | ✅ **Implemented** | Multi-factor risk scoring (0-100) & risk tiering (LOW, MEDIUM, HIGH) |
+| **What-If Scenario Simulation** | ✅ **Implemented** | Dual-scenario simulation comparing baseline vs target operational shifts |
+| **Analytics Agent** | ✅ **Implemented** | Generates synthesized natural language business insights (`agents/analytics_agent.py`) |
+| **Risk Agent** | ✅ **Implemented** | Diagnostic reasoning explaining detected risks and anomalies (`agents/risk_agent.py`) |
+| **User Authentication** | ✅ **Implemented** | Session persistence supporting Email/Password, Google OAuth, and GitHub OAuth |
+| **Decision Optimization Agent** | 🏗️ **Prepared** | Reasoning architecture in `agents/decision_agent.py` awaiting graph orchestration |
+| **LangGraph Multi-Agent Flow** | 🔮 *Planned / Future* | Dynamic agent graph orchestration across complex multi-step reasoning |
+| **RAG / Knowledge Retrieval** | 🔮 *Planned / Future* | Sentence Transformers + FAISS business document knowledge retrieval (`rag/`) |
+| **Excel (.xlsx) Data Upload** | 🔮 *Planned / Future* | Parsing of multi-sheet spreadsheet financial workbooks |
+| **Persistent Database Layer** | 🔮 *Planned / Future* | SQLite / PostgreSQL relational storage for historical audit logs |
 
-> `Sales = ₹1,20,000`
+---
 
-But important questions remain:
-
-* Why did sales decrease?
-* Which product or customer is causing the problem?
-* Where is the business at risk?
-* What might happen next?
-* Which action should be taken?
-* What if another action is chosen?
-
-### Why EVORA is Different
+## ❓ Core Questions & Agent Architecture
 
 ```mermaid
 flowchart LR
-    A["📊 What Happened?"] --> B["🔍 Why?"]
-    B --> C["⚠️ Where is the Risk?"]
-    C --> D["🤖 What May Happen?"]
-    D --> E["🔮 What-if?"]
-    E --> F["🎯 What Should We Do?"]
+    A["📊 Analytics Agent<br/>'What happened?'"] --> B["⚠️ Risk Agent<br/>'What is wrong?'"]
+    B --> C["🎯 Decision Optimization Agent<br/>'What should we do?'"]
 
-    classDef x fill:#6C5CE7,stroke:#4834A6,color:#fff
-    class A,B,C,D,E,F x
+    classDef agent fill:#6C5CE7,stroke:#4834A6,color:#fff
+    class A,B,C agent
 ```
 
-EVORA goes beyond reporting **what happened** by explaining **why**, identifying **risk**, forecasting **what may happen**, evaluating alternatives, and producing evidence-based recommendations.
+### 1. 📊 Analytics Agent
+* **Core Question:** *"What happened?"*
+* **Underlying Capabilities:** Business metrics aggregation, profit margin calculations, and trend analysis.
+* **Outputs:** Total revenue, expenses, net profit, profit margin %, and clear synthesized business insights.
+
+### 2. ⚠️ Risk Agent
+* **Core Question:** *"What is wrong?"*
+* **Underlying Capabilities:** Isolation Forest anomaly detection, Random Forest profit prediction, and rule-based risk scoring.
+* **Outputs:** Risk score (0–100), categorical risk level (LOW, MEDIUM, HIGH), anomaly status, and explainable risk reasons.
+
+### 3. 🎯 Decision Optimization Agent *(Architecture Prepared)*
+* **Core Question:** *"What should we do?"*
+* **Underlying Capabilities:** Synthesizes outputs from Analytics Agent, Risk Agent, and What-If scenario simulations.
+* **Outputs:** Evidence-based recommendation action plan with priority levels, preserving human decision authority.
 
 ---
 
-## 🎯 Project Goal
+## 🤖 Machine Learning Services
 
-EVORA's goal is to convert raw business information into a clear, explainable, and optimized recommendation that a human can act on.
+EVORA uses lightweight, robust Scikit-Learn models designed for enterprise operational data:
 
-```mermaid
-flowchart LR
-    A["📂 Business Data"] --> B["⚙️ Analysis"]
-    B --> C["💡 Insights"]
-    C --> D["⚠️ Risk"]
-    D --> E["🔮 Scenarios"]
-    E --> F["🎯 Optimization"]
-    F --> G["✅ Recommendation"]
+### 1. Profit Prediction — Random Forest
+* **Algorithm:** `RandomForestRegressor` (100 estimators)
+* **Target:** Net Profit (`Profit = Revenue - Expense`)
+* **Features:**
+  * `Quantity`
+  * `Revenue`
+  * `Expense`
+  * `Profit_Margin`
+  * `Revenue_per_Unit`
+  * `Expense_per_Unit`
+* **Artifact:** `ml/profit_model.pkl`
 
-    classDef main fill:#6C5CE7,stroke:#4834A6,color:#fff
-    class A,B,C,D,E,F,G main
-```
-
----
-
-## ❓ Core Questions
-
-|  #  | Question               | Answered By                    |
-| :-: | ---------------------- | ------------------------------ |
-|  1  | **What happened?**     | 📊 Analytics Agent             |
-|  2  | **What is wrong?**     | ⚠️ Risk Agent                  |
-|  3  | **What may happen?**   | 🤖 Machine Learning            |
-|  4  | **What should we do?** | 🎯 Decision Optimization Agent |
+### 2. Anomaly Detection — Isolation Forest
+* **Algorithm:** `IsolationForest` (200 estimators)
+* **Function:** Identifies unusual margin compressions, atypical revenue/expense unit ratios, and statistical outliers.
+* **Flag:** Returns `-1` for anomalies, mapped to `anomaly_detected = True` (+60 risk score weighting).
+* **Artifact:** `ml/anomaly_model.pkl`
 
 ---
 
-## 🚀 Key Features
+## ⚠️ Risk Analysis & Anomaly Detection
 
-<table>
-<tr>
-<td width="50%" valign="top">
-
-### 📊 Business Intelligence
-
-* CSV / Excel upload
-* Validation & preprocessing
-* Revenue, expense, profit & margin metrics
-* Product contribution
-* Customer contribution
-
-### 🤖 Machine Learning
-
-* XGBoost-based prediction
-* Quantitative forecasting
-* Data-driven future estimates
-
-### 🚨 Anomaly Detection
-
-* Isolation Forest
-* Unusual pattern detection
-* Risk-oriented anomaly signals
-
-</td>
-
-<td width="50%" valign="top">
-
-### 🧠 Multi-Agent AI
-
-* Analytics Agent
-* Risk Agent
-* Decision Optimization Agent
-* LangChain
-* LangGraph
-
-### 🔮 What-if Analysis
-
-* Test hypothetical scenarios
-* Compare alternatives
-* Evaluate impact
-* Support better decisions
-
-### 📚 RAG / Knowledge Retrieval
-
-* Ask EVORA
-* Business knowledge retrieval
-* Sentence Transformers + FAISS
-
-</td>
-</tr>
-</table>
-
----
-
-# 🧠 AI Agents
-
-## 📊 Analytics Agent
-
-### *"What happened?"*
-
-Analyzes:
-
-`Sales • Revenue • Expense • Customers • Products`
-
-and converts business trends into understandable insights.
-
-> 💬 **Example:**
-> "Sales decreased by 12% during the last period."
-
----
-
-## ⚠️ Risk Agent
-
-### *"What is wrong?"*
-
-Interprets:
-
-`Metrics + ML Results + Anomalies + Business Context`
-
-to identify risky products, customers, and negative patterns.
-
-> 💬 **Example:**
-> "High business risk detected due to increasing complaints and delivery delays."
-
----
-
-## 🎯 Decision Optimization Agent
-
-### *"Which action is most suitable?"*
-
-Combines:
+EVORA aggregates quantitative indicators into an interpretable 0–100 risk score:
 
 ```text
-📊 Analytics
-      +
-🤖 ML Prediction
-      +
-⚠️ Risk Analysis
-      +
-🔮 What-if Scenarios
-      ↓
-🎯 Optimized Recommendation
+Baseline / Normal pattern:    +10 points
+Anomaly detected:             +60 points
+Negative profit margin:       +25 points
+Profit margin < 10%:          +15 points
+Profit margin < 20%:          +5 points
+Negative predicted profit:    +15 points
 ```
 
-> 💬 **Example:**
-> "Investigate delayed deliveries and high-risk customer segments before increasing marketing expenditure."
+### Risk Level Categorization
 
-**The Decision Optimization Agent recommends an action. It does not automatically execute the business decision.**
+| Risk Score | Risk Level | Meaning |
+| :---: | :---: | :--- |
+| **0 – 30** | 🟢 **LOW** | Operations are stable, margins are healthy, and no unusual anomalies are present. |
+| **31 – 60** | 🟠 **MEDIUM** | Moderate margin compression or slight operational variance detected. |
+| **61 – 100** | 🔴 **HIGH** | Outlier anomaly detected, negative margins, or projected losses requiring executive attention. |
 
 ---
 
-# 🤖 Machine Learning vs AI Agents
+## 🔌 API Endpoints
 
-| Machine Learning      | AI Agents        |
-| --------------------- | ---------------- |
-| Quantitative analysis | Interpretation   |
-| Finds patterns        | Explains results |
-| Prediction            | Reasoning        |
-| Anomaly detection     | Recommendation   |
+The backend is built with FastAPI and runs on `http://127.0.0.1:8000`.
 
-### Simple Concept
-
-```text
-🤖 MACHINE LEARNING
-        ↓
-Find Patterns
-        ↓
-Make Predictions
-        ↓
-Detect Anomalies
-        │
-        ▼
-🧠 AI AGENTS
-        ↓
-Interpret Results
-        ↓
-Understand Business Context
-        ↓
-Reason About Risk
-        ↓
-Recommend Action
-```
+| Endpoint | Method | Input | Output / Description |
+| :--- | :---: | :--- | :--- |
+| `/health` | `GET` | *None* | Service health status (`{"status": "healthy"}`) |
+| `/upload` | `POST` | `multipart/form-data` (CSV) | Ingests CSV, computes metrics, and runs Random Forest profit prediction |
+| `/analytics` | `POST` | `multipart/form-data` (CSV) | Activates Analytics Agent to produce natural language business insights |
+| `/ml/predict-profit` | `POST` | JSON: `{Quantity, Revenue, Expense}` | Predicts profit using the trained Random Forest model |
+| `/analyze-risk` | `POST` | JSON: `{Quantity, Revenue, Expense}` | Evaluates risk score, risk level, anomaly status, and agent reasons |
+| `/what-if` | `POST` | JSON: baseline & target values | Compares current vs hypothetical scenario, computing projected profit delta |
 
 ---
 
-# ⚠️ Risk Analysis
-
-EVORA combines multiple analysis layers to generate an interpretable risk score.
-
-```mermaid
-flowchart TD
-
-    A["📊 Business Metrics"] --> R["🛡️ Risk Engine"]
-    B["🤖 ML Results"] --> R
-    C["🚨 Anomaly Detection"] --> R
-    D["📋 Business Rules"] --> R
-
-    R --> S["📈 Risk Score"]
-    S --> L{"Risk Level"}
-
-    L --> H["🔴 HIGH RISK"]
-    L --> M["🟠 MEDIUM RISK"]
-    L --> G["🟢 LOW RISK"]
-
-    classDef input fill:#54A0FF,stroke:#2E5C8A,color:#fff
-    classDef engine fill:#6C5CE7,stroke:#4834A6,color:#fff
-    classDef high fill:#E74C3C,stroke:#922B21,color:#fff
-    classDef medium fill:#F5A623,stroke:#B9770E,color:#fff
-    classDef low fill:#00B894,stroke:#00795A,color:#fff
-
-    class A,B,C,D input
-    class R,S engine
-    class H high
-    class M medium
-    class G low
-```
-
-### Risk Calculation
-
-```text
-📊 Business Metrics
-        +
-🤖 ML Results
-        +
-🚨 Anomaly Detection
-        +
-📋 Business Rules
-        ↓
-   📈 Risk Score
-        ↓
-   ⚠️ Risk Level
-```
-
-> Risk scores are decision indicators, not guaranteed probabilities.
-
----
-
-# 🔄 Workflow
-
-## 🚀 Complete EVORA Pipeline
-
-```mermaid
-flowchart LR
-
-    A["📥 CSV / Excel"] --> B["🧹 Preprocessing"]
-    B --> C["📊 Business Metrics"]
-
-    C --> D{"🤖 ML Engine"}
-
-    D --> P["📈 Prediction"]
-    D --> AD["🚨 Anomaly"]
-
-    P --> R["🛡️ Risk"]
-    AD --> R
-
-    R --> LG["🧠 LangGraph"]
-
-    LG --> AN["📊 Analytics"]
-    AN --> RA["⚠️ Risk Agent"]
-    RA --> DO["🎯 Decision"]
-
-    DO --> WI["🔮 What-if"]
-    WI --> REC["✅ Recommendation"]
-
-    REC --> USER["👤 Human Decision"]
-
-    classDef input fill:#2E86DE,stroke:#1B4F91,color:#fff
-    classDef process fill:#54A0FF,stroke:#2E5C8A,color:#fff
-    classDef ml fill:#6C5CE7,stroke:#4834A6,color:#fff
-    classDef risk fill:#F5A623,stroke:#B9770E,color:#fff
-    classDef agent fill:#8E44AD,stroke:#5B2C6F,color:#fff
-    classDef output fill:#00B894,stroke:#00795A,color:#fff
-
-    class A input
-    class B,C,WI process
-    class D,P,AD ml
-    class R risk
-    class LG,AN,RA,DO agent
-    class REC,USER output
-```
-
-### ⚡ Animated-Style Workflow
-
-```text
-📂 DATA
-  │
-  ▼
-⚙️ PREPROCESSING
-  │
-  ▼
-📊 ANALYTICS
-  │
-  ├───────────────┐
-  ▼               ▼
-🤖 ML          🚨 ANOMALY
-  │               │
-  └───────┬───────┘
-          ▼
-      ⚠️ RISK
-          │
-          ▼
-      🧠 AGENTS
-          │
-          ├── 📊 Analytics
-          │
-          ├── ⚠️ Risk
-          │
-          └── 🎯 Decision
-                  │
-                  ▼
-             🔮 WHAT-IF
-                  │
-                  ▼
-             💡 ACTION
-                  │
-                  ▼
-             👤 HUMAN
-```
-
----
-
-# 🏗️ System Architecture
+## 🏗️ System Architecture
 
 ```mermaid
 flowchart TB
+    USER["👤 Executive User"] --> FE["🖥️ Next.js Enterprise Dashboard"]
 
-    U["👤 User"]
-    FE["🖥️ Next.js + React"]
-    API["⚙️ FastAPI"]
-    DP["🐼 Pandas"]
-    BM["📊 Business Metrics"]
-    ML["🤖 ML Engine"]
-    XGB["📈 XGBoost"]
-    AD["🚨 Anomaly Detection"]
-    RISK["🛡️ Risk Analysis"]
-    LG["🧠 LangGraph"]
-    AN["📊 Analytics Agent"]
-    RA["⚠️ Risk Agent"]
-    DO["🎯 Decision Optimization"]
-    WI["🔮 What-if Analysis"]
-    DASH["📊 Dashboard"]
+    subgraph Presentation ["Presentation Layer"]
+        FE --> CU["CsvUpload.tsx"]
+        FE --> OC["OverviewCards.tsx"]
+        FE --> AA["AnalyticsAgent.tsx"]
+        FE --> RA["RiskAgent.tsx"]
+        FE --> WI["WhatIfAnalysis.tsx"]
+    end
 
-    U --> FE
-    FE --> API
-    API --> DP
-    DP --> BM
-    BM --> ML
-
-    ML --> XGB
-    ML --> AD
-
-    XGB --> RISK
-    AD --> RISK
-
-    RISK --> LG
-    LG --> AN
-    AN --> RA
-    RA --> DO
-
-    RA -->|Low Risk| DASH
-    DO --> WI
-    WI --> DASH
+    subgraph Backend ["FastAPI Backend (Port 8000)"]
+        API["FastAPI Routing Engine"]
+        FE --> API
+        API --> VAL["Data Validation & Features (features.py)"]
+        API --> ML_RF["Random Forest Regressor (profit_model.pkl)"]
+        API --> ML_IF["Isolation Forest (anomaly_model.pkl)"]
+        API --> AG_AN["AnalyticsAgent (agents/analytics_agent.py)"]
+        API --> AG_RK["RiskAgent (agents/risk_agent.py)"]
+        API --> AG_DO["DecisionOptimizationAgent (agents/decision_agent.py)"]
+    end
 
     classDef user fill:#2E86DE,stroke:#1B4F91,color:#fff
-    classDef frontend fill:#54A0FF,stroke:#2E5C8A,color:#fff
-    classDef backend fill:#00B894,stroke:#00795A,color:#fff
-    classDef process fill:#74B9FF,stroke:#2E5C8A,color:#fff
+    classDef fe fill:#54A0FF,stroke:#2E5C8A,color:#fff
+    classDef be fill:#00B894,stroke:#00795A,color:#fff
     classDef ml fill:#6C5CE7,stroke:#4834A6,color:#fff
-    classDef risk fill:#F5A623,stroke:#B9770E,color:#fff
-    classDef agent fill:#8E44AD,stroke:#5B2C6F,color:#fff
-    classDef output fill:#00B894,stroke:#00795A,color:#fff
+    classDef ag fill:#8E44AD,stroke:#5B2C6F,color:#fff
 
-    class U user
-    class FE frontend
-    class API backend
-    class DP,BM process
-    class ML,XGB,AD ml
-    class RISK risk
-    class LG,AN,RA,DO agent
-    class WI,DASH output
-```
-
-### 🧩 Architecture Layers
-
-```text
-┌─────────────────────────────────────┐
-│         👤 PRESENTATION             │
-│       Next.js + React               │
-└─────────────────┬───────────────────┘
-                  ↓
-┌─────────────────────────────────────┐
-│          ⚙️ BACKEND                 │
-│             FastAPI                 │
-└─────────────────┬───────────────────┘
-                  ↓
-┌─────────────────────────────────────┐
-│        📊 DATA PROCESSING            │
-│        Pandas + NumPy               │
-└─────────────────┬───────────────────┘
-                  ↓
-┌─────────────────────────────────────┐
-│          🤖 ML LAYER                │
-│      XGBoost + Anomaly Detection    │
-└─────────────────┬───────────────────┘
-                  ↓
-┌─────────────────────────────────────┐
-│        ⚠️ RISK LAYER                │
-│     Metrics + ML + Anomalies        │
-└─────────────────┬───────────────────┘
-                  ↓
-┌─────────────────────────────────────┐
-│        🧠 AGENT LAYER               │
-│ Analytics → Risk → Decision         │
-└─────────────────┬───────────────────┘
-                  ↓
-┌─────────────────────────────────────┐
-│        🔮 DECISION LAYER            │
-│      What-if + Recommendation       │
-└─────────────────┬───────────────────┘
-                  ↓
-┌─────────────────────────────────────┐
-│          👤 HUMAN                   │
-│       Final Decision                │
-└─────────────────────────────────────┘
+    class USER user
+    class FE,CU,OC,AA,RA,WI fe
+    class API,VAL be
+    class ML_RF,ML_IF ml
+    class AG_AN,AG_RK,AG_DO ag
 ```
 
 ---
 
-# 🛠️ Technology Stack
+## 🛠️ Technology Stack
 
-| Category            | Technologies                 |
-| ------------------- | ---------------------------- |
-| 🐍 Language         | Python                       |
-| 🧮 Data Processing  | Pandas, NumPy                |
-| 🤖 Machine Learning | Scikit-learn, XGBoost        |
-| 🧠 Agentic AI       | LangChain, LangGraph         |
-| 💬 LLM              | Groq                         |
-| 🔎 Retrieval        | Sentence Transformers, FAISS |
-| ⚙️ Backend          | FastAPI                      |
-| 🗄️ Database        | SQLite                       |
-| 🖥️ Frontend        | Next.js, React               |
-| 🔧 Version Control  | Git, GitHub                  |
-
-### Planned Frontend Pages
-
-`Dashboard · Business Analysis · ML Predictions · Anomaly & Risk · AI Recommendations · What-if Analysis · Ask EVORA · Reports`
+| Category | Implemented Technologies | Planned / Future Additions |
+| :--- | :--- | :--- |
+| **Frontend** | Next.js 16 (App Router), React 19, TypeScript, Tailwind CSS, Lucide Icons | Charting library expansion |
+| **Backend** | FastAPI, Uvicorn, Python 3.11+, Pydantic | PostgreSQL / SQLite persistence |
+| **Data & Feature Engineering** | Pandas, NumPy | Automated schema inference |
+| **Machine Learning** | Scikit-Learn (`RandomForestRegressor`, `IsolationForest`), Joblib | Model registry & auto-retraining |
+| **AI Agents** | Native Reasoning Agents (`AnalyticsAgent`, `RiskAgent`, `DecisionOptimizationAgent`) | LangGraph dynamic graph orchestration |
+| **Auth & Security** | Next.js Client Auth Context, Google/GitHub OAuth session flows, CORS Middleware | JWT / OAuth2 backend validation |
 
 ---
 
-# 📁 Project Structure
+## 📁 Project Structure
 
 ```text
 EVORA/
-│
-├── backend/        → FastAPI application & API endpoints
-├── frontend/       → Next.js + React interface
-├── ml/             → XGBoost models & anomaly detection
-├── agents/         → Analytics, Risk & Decision Optimization agents
-├── rag/            → Knowledge retrieval (FAISS + embeddings)
-├── data/           → Sample & uploaded business datasets
-├── tests/          → Test suite
-└── README.md
+├── agents/                           # Multi-Agent Reasoning Layer
+│   ├── analytics_agent.py            # Analytics Agent ("What happened?")
+│   ├── risk_agent.py                 # Risk Agent ("What is wrong?")
+│   ├── decision_agent.py             # Decision Optimization Agent ("What should we do?")
+│   └── test_analytics_agent.py       # Agent test script
+├── backend/                          # FastAPI Backend
+│   ├── main.py                       # REST API endpoints & CORS configuration
+│   ├── features.py                   # Feature engineering pipeline
+│   ├── test_features.py              # Feature engineering test
+│   ├── requirements.txt              # Backend dependencies
+│   └── pyproject.toml                # Project packaging metadata
+├── data/                             # Datasets
+│   ├── anomaly_training_data.csv     # Anomaly detector training data
+│   └── sample_business_data.csv      # Sample financial data
+├── frontend/                         # Next.js App Router Frontend
+│   ├── app/
+│   │   ├── dashboard/page.tsx        # Modular, agent-centric dashboard (<150 lines)
+│   │   ├── login/                    # Login interface (Email, Google, GitHub)
+│   │   └── layout.tsx                # App root layout with AuthProvider
+│   ├── components/
+│   │   ├── dashboard/
+│   │   │   ├── CsvUpload.tsx         # CSV ingestion & status component
+│   │   │   ├── OverviewCards.tsx     # KPI metrics & ML prediction banner
+│   │   │   ├── AnalyticsAgent.tsx    # Analytics Agent reasoning card
+│   │   │   ├── RiskAgent.tsx         # Risk Agent meter & anomaly card
+│   │   │   ├── WhatIfAnalysis.tsx    # Scenario simulation & comparison
+│   │   │   └── types.ts              # Shared TypeScript interfaces
+│   │   └── OAuthButtons.tsx          # Google & GitHub OAuth buttons
+│   └── lib/
+│       ├── api.ts                    # Backend API client
+│       └── auth.ts                   # Authentication context & session store
+├── ml/                               # Machine Learning Core
+│   ├── profit_model.pkl              # Trained Random Forest Regressor
+│   ├── anomaly_model.pkl             # Trained Isolation Forest Model
+│   ├── train_model.py                # Profit model training script
+│   ├── train_anomaly_model.py        # Anomaly model training script
+│   └── generate_anomaly_data.py      # Synthetic anomaly data generator
+├── tests/                            # Automated Evaluation Suite
+│   ├── test_agents_evaluation.py     # Evaluation across 7 business risk scenarios
+│   └── test_decision_agent.py        # Decision Optimization Agent tests
+├── rag/                              # [Planned] Knowledge retrieval directory
+└── README.md                         # Documentation
 ```
 
 ---
 
-# 📥 Input Data
+## 🔮 What-if Analysis & Decision Support
 
-EVORA works from uploaded CSV or Excel business data.
-
-| Field            | Description                   |
-| ---------------- | ----------------------------- |
-| Date             | Transaction or reporting date |
-| Product          | Product or service name       |
-| Category         | Product category              |
-| Quantity         | Units sold                    |
-| Revenue          | Revenue generated             |
-| Expense          | Associated cost               |
-| Customer         | Customer identifier           |
-| Customer Segment | Customer grouping / segment   |
-| Complaints       | Number of complaints logged   |
-| Delivery Delay   | Delivery delay indicator      |
-
-> Not every dataset needs every field — EVORA works with the columns available in the uploaded file.
-
----
-
-# 📊 Business Metrics
-
-* 💰 Revenue
-* 💸 Expenses
-* 📈 Profit
-* 📊 Profit Margin
-* 📉 Sales Growth
-* 🏷️ Product Contribution
-* 👥 Customer Contribution
-
----
-
-# 🔮 What-if Analysis
-
-EVORA lets users test hypothetical business decisions before making them.
-
-> 💬 **Example:**
-> *"What if Product A's price increases by 10%?"*
-
-```mermaid
-flowchart LR
-
-    A["📌 Current Scenario"]
-    B["🔄 Alternative Scenario"]
-    C["📊 Impact Comparison"]
-    D["⚠️ Risk Evaluation"]
-    E["🎯 Recommended Option"]
-
-    A --> B --> C --> D --> E
-
-    classDef scenario fill:#54A0FF,stroke:#2E5C8A,color:#fff
-    classDef analysis fill:#6C5CE7,stroke:#4834A6,color:#fff
-    classDef risk fill:#F5A623,stroke:#B9770E,color:#fff
-    classDef output fill:#00B894,stroke:#00795A,color:#fff
-
-    class A,B scenario
-    class C analysis
-    class D risk
-    class E output
-```
-
-### 🔮 Scenario Flow
+EVORA allows executive users to simulate operational changes before committing capital:
 
 ```text
-📌 CURRENT
-    │
-    ▼
-🔄 ALTERNATIVE
-    │
-    ▼
-📊 IMPACT
-    │
-    ▼
-⚠️ RISK
-    │
-    ▼
-🎯 RECOMMENDATION
-```
-
-Scenario results are estimates based on available data and stated assumptions — not guaranteed forecasts.
-
----
-
-# 🧪 Example Walkthrough
-
-### Business Snapshot
-
-| Metric         |  Change |
-| -------------- | ------: |
-| Sales          | 🔻 -12% |
-| Complaints     | 🔺 +18% |
-| Delivery Delay | 🔺 +15% |
-| Expenses       | 🔺 +21% |
-
-### EVORA Reasoning
-
-```text
-📊 ANALYTICS
-Sales performance declined significantly.
-             ↓
-🤖 MACHINE LEARNING
-High likelihood of continued sales weakness.
-             ↓
-⚠️ RISK AGENT
-High business risk due to rising expenses
-and delivery delays.
-             ↓
-🎯 DECISION OPTIMIZATION
-Investigate delayed deliveries and high-risk
-customer segments before increasing marketing spend.
-```
-
-### What-if Question
-
-> **"What if Product A's price increases by 10%?"**
-
-```text
-Question
-   ↓
-🔮 Scenario Creation
-   ↓
-📊 Impact Analysis
-   ↓
-⚠️ Risk Evaluation
-   ↓
-🎯 Recommended Option
+Baseline Scenario (Current)           Target Scenario (What-If)
+Quantity: 100 units                   Quantity: 120 units (+20%)
+Revenue:  ₹50,000                     Revenue:  ₹60,000 (+20%)
+Expense:  ₹30,000                     Expense:  ₹32,000 (+6.7%)
+           ↓                                     ↓
+Current Profit: ₹11,790               Target Profit: ₹17,350
+           └────────────────┬────────────────────┘
+                            ↓
+               Net Delta: +₹5,560.00
+               Result: Profit may increase
 ```
 
 ---
 
-# 🛡️ Reliability and Limitations
+## 🧪 Evaluation & Verification
 
-EVORA is a **recommendation system**, not an autonomous execution system.
+The agent suite is validated using automated test suites covering:
+* **Normal Business:** Positive profit with healthy profit margin ($\ge 20\%$)
+* **Low Risk:** High margins, predictable patterns, risk score $\le 30$
+* **Medium Risk:** Moderate margins ($10-20\%$), risk score $31-60$
+* **High Risk:** Extreme expense exceeding revenue, risk score $> 60$
+* **Anomaly Detected:** Statistical outlier values triggering Isolation Forest
+* **Negative Profit:** Revenue $<$ Expense producing loss warnings
+* **Positive Profit:** Revenue $>$ Expense confirming profitable operations
 
-Every recommendation is expected to carry:
-
-* A clear reason
-* A supporting metric
-* Evidence
-* An associated risk
-* A confidence level
-
-When data is inadequate:
-
-> **"Insufficient evidence for a strong recommendation."**
-
-If Groq is unavailable, the ML and business-rule layers can continue working independently, falling back to a basic rules-based recommendation.
-
-### Known Limitations
-
-* Recommendation quality depends on uploaded data quality
-* ML predictions are estimates, not guarantees
-* Anomaly detection may need human verification
-* What-if results depend on assumptions and available data
-* LLM-generated explanations may require validation
-* Risk scores are indicators, not guaranteed probabilities
-
-> **EVORA's role ends at the recommendation — executing the decision is always left to the user.**
-
----
-
-# 📏 Evaluation
-
-### 🧮 Machine Learning
-
-`MAE` · `RMSE` · `MAPE` · `Precision` · `Recall` · `F1`
-
-### 🤖 AI Agents
-
-* Insight correctness
-* Recommendation relevance
-* Evidence correctness
-* Unsupported-recommendation rate
-
-### ⚙️ System
-
-* Response time
-* Token usage
-* Agent calls
-* Retrieval time
-
----
-
-# 🚧 Project Status
-
-**Under Active Development**
-
-EVORA is being built in stages, starting with the core CSV-to-dashboard data flow.
-
-```text
-📊 Business Intelligence
-          ↓
-🤖 Machine Learning
-          ↓
-🚨 Anomaly Detection
-          ↓
-🧠 Multi-Agent AI
-          ↓
-📚 RAG
-          ↓
-🔮 What-if Analysis
-          ↓
-🎯 Decision Optimization
+To run the verification suite:
+```bash
+python tests/test_agents_evaluation.py
+python tests/test_decision_agent.py
 ```
+
+---
+
+## 🚀 Getting Started
+
+### 1. Prerequisites
+* Python 3.11+
+* Node.js 18+ and npm
+
+### 2. Backend Setup
+```bash
+cd backend
+pip install -r requirements.txt
+uvicorn main:app --reload --port 8000
+```
+Backend will be available at `http://127.0.0.1:8000`.
+
+### 3. Frontend Setup
+```bash
+cd frontend
+npm install
+npm run dev
+```
+Open `http://localhost:3000` in your browser.
 
 ---
 
 <div align="center">
 
-### 🚀 EVORA — From Business Data to Optimized Decisions.
+### 🚀 EVORA — Enterprise Vision Optimizing Reasoning Assistant
 
 <br/>
 
-[![View Repository](https://img.shields.io/badge/View-Repository-181717?style=for-the-badge\&logo=github\&logoColor=white)](https://github.com/kedar765/EVORA)
+[![View Repository](https://img.shields.io/badge/View-Repository-181717?style=for-the-badge&logo=github&logoColor=white)](https://github.com/kedar765/EVORA)
 
 <br/><br/>
 
