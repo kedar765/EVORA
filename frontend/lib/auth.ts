@@ -1,8 +1,15 @@
+
 "use client";
 
-import React, { createContext, useContext, useState, ReactNode } from "react";
+import React, {
+  createContext,
+  useContext,
+  useEffect,
+  useState,
+  type ReactNode,
+} from "react";
 import { useRouter } from "next/navigation";
-import { api, LoginCredentials, SignupCredentials } from "./api";
+import { api } from "./api";
 
 export interface User {
   id: string;
@@ -16,105 +23,143 @@ interface AuthContextType {
   user: User | null;
   isAuthenticated: boolean;
   isLoading: boolean;
-  login: (email: string, password: string, rememberMe?: boolean) => Promise<boolean>;
+  login: (
+    email: string,
+    password: string,
+    rememberMe?: boolean
+  ) => Promise<boolean>;
+  signup: (
+    name: string,
+    email: string,
+    password: string
+  ) => Promise<boolean>;
   loginWithGoogle: () => Promise<boolean>;
   loginWithGitHub: () => Promise<boolean>;
-  signup: (name: string, email: string, password: string) => Promise<boolean>;
   logout: () => void;
 }
 
-const AuthContext = createContext<AuthContextType | undefined>(undefined);
-
-const SESSION_STORAGE_KEY = "evora_session";
-
-function getInitialUser(): User | null {
-  if (typeof window === "undefined") return null;
-  try {
-    const storedSession = localStorage.getItem(SESSION_STORAGE_KEY);
-    if (storedSession) {
-      return JSON.parse(storedSession) as User;
-    }
-  } catch {
-    localStorage.removeItem(SESSION_STORAGE_KEY);
-  }
-  return null;
+interface SessionResponse {
+  user?: {
+    id: string;
+    email: string;
+    fullName?: string;
+    avatar?: string;
+    provider?: User["provider"];
+  };
 }
 
-export function AuthProvider({ children }: { children: ReactNode }) {
-  const [user, setUser] = useState<User | null>(getInitialUser);
-  const [isLoading, setIsLoading] = useState<boolean>(false);
+const API_BASE_URL =
+  process.env.NEXT_PUBLIC_API_URL ||
+  "http://localhost:8000";
+
+const AuthContext = createContext<
+  AuthContextType | undefined
+>(undefined);
+
+function formatUser(
+  data: NonNullable<SessionResponse["user"]>
+): User {
+  return {
+    id: data.id,
+    name: data.fullName || data.email.split("@")[0],
+    email: data.email,
+    avatar: data.avatar,
+    provider: data.provider || "email",
+  };
+}
+
+async function fetchCurrentUser(): Promise<User | null> {
+  const response = await fetch(
+    `${API_BASE_URL}/api/auth/me`,
+    {
+      method: "GET",
+      credentials: "include",
+      cache: "no-store",
+    }
+  );
+
+  if (!response.ok) {
+    return null;
+  }
+
+  const data: SessionResponse = await response.json();
+
+  if (!data.user?.id || !data.user?.email) {
+    return null;
+  }
+
+  return formatUser(data.user);
+}
+
+export function AuthProvider({
+  children,
+}: {
+  children: ReactNode;
+}) {
   const router = useRouter();
 
-  const persistSession = (userData: User) => {
-    setUser(userData);
-    try {
-      localStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(userData));
-    } catch {
+  const [user, setUser] = useState<User | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
+
+  useEffect(() => {
+    let active = true;
+
+    async function verifySession() {
+      try {
+        const currentUser = await fetchCurrentUser();
+
+        if (active) {
+          setUser(currentUser);
+        }
+      } catch {
+        if (active) {
+          setUser(null);
+        }
+      } finally {
+        if (active) {
+          setIsLoading(false);
+        }
+      }
     }
-  };
+
+    verifySession();
+
+    return () => {
+      active = false;
+    };
+  }, []);
 
   const login = async (
     email: string,
     password: string,
-    rememberMe: boolean = true
+    rememberMe = false
   ): Promise<boolean> => {
     setIsLoading(true);
+
     try {
-      const credentials: LoginCredentials = { email, password, rememberMe };
-      const res = await api.login(credentials);
-      const name = res.user?.fullName || email.split("@")[0] || "Executive Leader";
-      const userData: User = {
-        id: res.user?.id || "usr_" + Date.now(),
-        name,
+      const response = await api.login({
         email,
-        provider: "email",
-      };
-      persistSession(userData);
-      router.push("/dashboard");
-      return true;
-    } catch {
-      return false;
-    } finally {
-      setIsLoading(false);
-    }
-  };
+        password,
+        rememberMe,
+      });
 
-  const loginWithGoogle = async (): Promise<boolean> => {
-    setIsLoading(true);
-    try {
-      await new Promise((resolve) => setTimeout(resolve, 900));
-      const userData: User = {
-        id: "goog_" + Date.now(),
-        name: "Alex Mercer",
-        email: "alex.mercer@evora.ai",
-        avatar: "https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=256&q=80",
-        provider: "google",
-      };
-      persistSession(userData);
-      router.push("/dashboard");
-      return true;
-    } catch {
-      return false;
-    } finally {
-      setIsLoading(false);
-    }
-  };
+      if (!response.success) {
+        return false;
+      }
 
-  const loginWithGitHub = async (): Promise<boolean> => {
-    setIsLoading(true);
-    try {
-      await new Promise((resolve) => setTimeout(resolve, 900));
-      const userData: User = {
-        id: "gh_" + Date.now(),
-        name: "Morgan Vance",
-        email: "morgan.vance@developer.io",
-        avatar: "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&w=256&q=80",
-        provider: "github",
-      };
-      persistSession(userData);
-      router.push("/dashboard");
+      const verifiedUser = await fetchCurrentUser();
+
+      if (!verifiedUser) {
+        return false;
+      }
+
+      setUser(verifiedUser);
+      router.replace("/dashboard");
+
       return true;
-    } catch {
+    } catch (error) {
+      console.error("Login failed:", error);
+      setUser(null);
       return false;
     } finally {
       setIsLoading(false);
@@ -127,32 +172,76 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     password: string
   ): Promise<boolean> => {
     setIsLoading(true);
+
     try {
-      const credentials: SignupCredentials = { fullName: name, email, password };
-      const res = await api.signup(credentials);
-      const userData: User = {
-        id: res.user?.id || "usr_" + Date.now(),
-        name: name || "Executive Leader",
+      const response = await api.signup({
+        fullName: name,
         email,
-        provider: "email",
-      };
-      persistSession(userData);
-      router.push("/dashboard");
+        password,
+      });
+
+      if (!response.success) {
+        return false;
+      }
+
+      const verifiedUser = await fetchCurrentUser();
+
+      if (!verifiedUser) {
+        return false;
+      }
+
+      setUser(verifiedUser);
+      router.replace("/dashboard");
+
       return true;
-    } catch {
+    } catch (error) {
+      console.error("Signup failed:", error);
+      setUser(null);
       return false;
     } finally {
       setIsLoading(false);
     }
   };
 
-  const logout = () => {
-    setUser(null);
-    try {
-      localStorage.removeItem(SESSION_STORAGE_KEY);
-    } catch {
+  // Disabled until real OAuth is implemented.
+  const loginWithGoogle = async (): Promise<boolean> => {
+    return false;
+  };
+
+  const loginWithGitHub = async (): Promise<boolean> => {
+    return false;
+  };
+
+  const logout = (): void => {
+    async function endSession() {
+      try {
+        const response = await fetch(
+          `${API_BASE_URL}/api/auth/logout`,
+          {
+            method: "POST",
+            credentials: "include",
+          }
+        );
+
+        if (!response.ok) {
+          throw new Error("Logout failed");
+        }
+
+        setUser(null);
+
+        localStorage.removeItem("evora_session");
+
+        sessionStorage.removeItem("evora_active_upload");
+        sessionStorage.removeItem("evora_dataset_preview");
+        sessionStorage.removeItem("evora_full_dataset");
+
+        router.replace("/login");
+      } catch (error) {
+        console.error("Logout failed:", error);
+      }
     }
-    router.push("/login");
+
+    void endSession();
   };
 
   return React.createElement(
@@ -160,12 +249,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     {
       value: {
         user,
-        isAuthenticated: !!user,
+        isAuthenticated: user !== null,
         isLoading,
         login,
+        signup,
         loginWithGoogle,
         loginWithGitHub,
-        signup,
         logout,
       },
     },
@@ -173,10 +262,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   );
 }
 
-export function useAuth() {
+export function useAuth(): AuthContextType {
   const context = useContext(AuthContext);
+
   if (!context) {
-    throw new Error("useAuth must be used within an AuthProvider");
+    throw new Error(
+      "useAuth must be used within AuthProvider"
+    );
   }
+
   return context;
 }

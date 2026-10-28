@@ -1,12 +1,19 @@
+
 "use client";
 
-import React from "react";
 import {
   BrainCircuit,
-  Sliders,
-  Shield,
+  TrendingUp,
+  TrendingDown,
+  SlidersHorizontal,
+  ShieldCheck,
 } from "lucide-react";
-import { BusinessMetrics, formatINR } from "./types";
+
+import {
+  type BusinessMetrics,
+  formatINR,
+  formatNumber,
+} from "./types";
 
 interface MlPredictionProps {
   predictedProfit: number | null | undefined;
@@ -19,175 +26,248 @@ export default function MlPrediction({
   actualMetrics,
   isLoading,
 }: MlPredictionProps) {
-  const hasPrediction = predictedProfit !== null && predictedProfit !== undefined;
-  const actualProfit = actualMetrics?.total_profit;
-  const hasActual = actualProfit !== undefined && actualProfit !== null;
+  const hasPrediction =
+    predictedProfit !== null &&
+    predictedProfit !== undefined &&
+    Number.isFinite(predictedProfit);
 
-  const profitVariance =
-    hasPrediction && hasActual ? predictedProfit - actualProfit : null;
+  const actualAverageProfit =
+    actualMetrics?.average_profit;
+
+  const hasActual =
+    actualAverageProfit !== null &&
+    actualAverageProfit !== undefined &&
+    Number.isFinite(actualAverageProfit);
+
+  const profitDifference =
+    hasPrediction && hasActual
+      ? predictedProfit - actualAverageProfit
+      : null;
+
+  const isPositiveDifference =
+    profitDifference !== null &&
+    profitDifference > 0;
+
+  const isNegativeDifference =
+    profitDifference !== null &&
+    profitDifference < 0;
+
+  const totalQuantity =
+    actualMetrics?.total_sales ?? null;
+
+  const totalRevenue =
+    actualMetrics?.total_revenue ?? null;
+
+  const totalExpense =
+    actualMetrics?.total_expense ?? null;
+
+  const revenuePerUnit =
+    totalQuantity !== null &&
+    totalQuantity !== 0 &&
+    totalRevenue !== null
+      ? totalRevenue / totalQuantity
+      : null;
+
+  const expensePerUnit =
+    totalQuantity !== null &&
+    totalQuantity !== 0 &&
+    totalExpense !== null
+      ? totalExpense / totalQuantity
+      : null;
+
+  const features = [
+    {
+      label: "Total Quantity",
+      value:
+        totalQuantity !== null
+          ? formatNumber(totalQuantity)
+          : "—",
+    },
+    {
+      label: "Total Revenue",
+      value: formatINR(totalRevenue),
+    },
+    {
+      label: "Total Expense",
+      value: formatINR(totalExpense),
+    },
+    {
+      label: "Overall Profit Margin",
+      value:
+        actualMetrics?.profit_margin !== undefined
+          ? `${actualMetrics.profit_margin.toFixed(2)}%`
+          : "—",
+    },
+    {
+      label: "Revenue / Unit",
+      value: formatINR(revenuePerUnit),
+    },
+    {
+      label: "Expense / Unit",
+      value: formatINR(expensePerUnit),
+    },
+  ];
 
   return (
-    <div className="bg-white rounded-xl border border-slate-200/90 p-5 sm:p-6 shadow-xs space-y-5">
-      {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 pb-3 border-b border-slate-100">
-        <div className="flex items-center gap-2.5">
+    <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-sm space-y-6">
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 border-b border-slate-100 pb-4">
+        <div className="flex items-center gap-3">
           <div className="p-2 rounded-lg bg-indigo-50 text-indigo-600">
-            <BrainCircuit className="w-4 h-4" />
+            <BrainCircuit className="w-5 h-5" />
           </div>
+
           <div>
-            <span className="text-xs font-bold uppercase tracking-wider text-slate-500">
-              Predictive Intelligence
-            </span>
-            <h2 className="text-lg font-bold text-slate-900 tracking-tight">
-              Machine Learning Profit Prediction
+            <h2 className="text-lg font-bold text-slate-900">
+              ML Profit Prediction
             </h2>
+
+            <p className="text-xs text-slate-500 mt-1">
+              Machine learning based business profit estimation
+            </p>
           </div>
         </div>
 
-        <span className="text-xs font-semibold px-2.5 py-1 rounded-md bg-slate-100 text-slate-600 border border-slate-200/80">
+        <span className="text-xs font-semibold px-3 py-1.5 rounded-lg bg-slate-100 text-slate-700 border border-slate-200">
           Random Forest Regressor
         </span>
       </div>
 
       {isLoading ? (
-        <div className="py-10 text-center space-y-2 text-slate-400">
-          <div className="w-6 h-6 mx-auto border-2 border-indigo-600 border-t-transparent rounded-full animate-spin" />
-          <p className="text-xs font-medium text-slate-500">
-            Executing Random Forest regression on engineered features...
+        <div className="flex flex-col items-center justify-center py-12 gap-3">
+          <div className="w-7 h-7 border-2 border-indigo-600 border-t-transparent rounded-full animate-spin" />
+
+          <p className="text-sm text-slate-500">
+            Processing ML prediction...
+          </p>
+        </div>
+      ) : !hasPrediction && !actualMetrics ? (
+        <div className="text-center py-12 space-y-3">
+          <BrainCircuit className="w-9 h-9 text-slate-300 mx-auto" />
+
+          <h3 className="text-sm font-semibold text-slate-800">
+            No Prediction Available
+          </h3>
+
+          <p className="text-xs text-slate-500">
+            Upload a business CSV file to view ML predictions.
           </p>
         </div>
       ) : (
-        <div className="space-y-5">
-          {/* Main Comparison: Actual vs Predicted */}
+        <>
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-            {/* Predicted Profit Card */}
-            <div className="p-4 rounded-lg bg-indigo-50/50 border border-indigo-200/80 space-y-1.5">
-              <div className="flex items-center justify-between text-xs font-semibold text-indigo-700">
-                <span>Predicted Profit</span>
-                <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-indigo-100 text-indigo-800">
-                  ML ESTIMATE
-                </span>
-              </div>
-              <div className="text-2xl font-bold text-indigo-950">
-                {hasPrediction ? formatINR(predictedProfit) : "—"}
-              </div>
-              <p className="text-[11px] text-indigo-600">
-                Output of Random Forest regressor on feature inputs
+            <div className="rounded-xl border border-indigo-200 bg-indigo-50/60 p-4">
+              <p className="text-xs font-semibold text-indigo-700">
+                Average Predicted Profit
               </p>
-            </div>
 
-            {/* Actual Recorded Profit Card */}
-            <div className="p-4 rounded-lg bg-slate-50 border border-slate-200/80 space-y-1.5">
-              <div className="flex items-center justify-between text-xs font-semibold text-slate-600">
-                <span>Actual Net Profit</span>
-                <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-slate-200 text-slate-700">
-                  VERIFIED DATA
-                </span>
-              </div>
-              <div
-                className={`text-2xl font-bold ${
-                  hasActual
-                    ? actualProfit >= 0
-                      ? "text-emerald-700"
-                      : "text-rose-700"
-                    : "text-slate-900"
-                }`}
-              >
-                {hasActual ? formatINR(actualProfit) : "—"}
-              </div>
-              <p className="text-[11px] text-slate-400">
-                Sum of Revenue minus Expense from uploaded CSV
-              </p>
-            </div>
-
-            {/* Model Variance */}
-            <div className="p-4 rounded-lg bg-slate-50 border border-slate-200/80 space-y-1.5">
-              <span className="text-xs font-semibold text-slate-600 block">
-                Model Variance (Predicted − Actual)
-              </span>
-              <div
-                className={`text-2xl font-bold ${
-                  profitVariance !== null
-                    ? profitVariance >= 0
-                      ? "text-blue-700"
-                      : "text-amber-700"
-                    : "text-slate-900"
-                }`}
-              >
-                {profitVariance !== null
-                  ? `${profitVariance >= 0 ? "+" : ""}${formatINR(profitVariance)}`
+              <h3 className="text-2xl font-bold text-indigo-950 mt-2">
+                {hasPrediction
+                  ? formatINR(predictedProfit)
                   : "—"}
+              </h3>
+
+              <p className="text-xs text-indigo-600 mt-2">
+                ML estimate per CSV record
+              </p>
+            </div>
+
+            <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+              <p className="text-xs font-semibold text-slate-600">
+                Average Actual Profit
+              </p>
+
+              <h3 className="text-2xl font-bold text-slate-900 mt-2">
+                {hasActual
+                  ? formatINR(actualAverageProfit)
+                  : "—"}
+              </h3>
+
+              <p className="text-xs text-slate-500 mt-2">
+                Recorded profit per CSV record
+              </p>
+            </div>
+
+            <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+              <p className="text-xs font-semibold text-slate-600">
+                Prediction Difference
+              </p>
+
+              <div className="flex items-center gap-2 mt-2">
+                {isPositiveDifference ? (
+                  <TrendingUp className="w-5 h-5 text-emerald-600" />
+                ) : isNegativeDifference ? (
+                  <TrendingDown className="w-5 h-5 text-rose-600" />
+                ) : null}
+
+                <h3
+                  className={`text-2xl font-bold ${
+                    isPositiveDifference
+                      ? "text-emerald-700"
+                      : isNegativeDifference
+                      ? "text-rose-700"
+                      : "text-slate-900"
+                  }`}
+                >
+                  {profitDifference !== null
+                    ? `${profitDifference > 0 ? "+" : ""}${formatINR(
+                        profitDifference
+                      )}`
+                    : "—"}
+                </h3>
               </div>
-              <p className="text-[11px] text-slate-400">
-                Difference between ML regression projection and historical sum
+
+              <p className="text-xs text-slate-500 mt-2">
+                Predicted minus actual average
               </p>
             </div>
           </div>
 
-          {/* Model Inputs Transparency */}
-          <div className="p-4 rounded-lg bg-slate-50 border border-slate-200/70 space-y-3">
-            <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-slate-700">
-              <Sliders className="w-3.5 h-3.5 text-blue-600" />
-              <span>Prepared Model Input Features (6 Normalized Dimensions)</span>
+          <div className="rounded-xl border border-slate-200 bg-slate-50/60 p-5">
+            <div className="flex items-center gap-2 mb-4">
+              <SlidersHorizontal className="w-4 h-4 text-blue-600" />
+
+              <h3 className="text-sm font-bold text-slate-800">
+                Dataset Feature Summary
+              </h3>
             </div>
 
-            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2 text-xs">
-              <div className="p-2.5 rounded bg-white border border-slate-200/80">
-                <span className="text-[10px] text-slate-400 block font-medium">Quantity</span>
-                <span className="font-semibold text-slate-800 mt-0.5 block">
-                  {actualMetrics?.total_sales !== undefined ? actualMetrics.total_sales.toLocaleString() : "—"}
-                </span>
-              </div>
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+              {features.map((feature) => (
+                <div
+                  key={feature.label}
+                  className="rounded-lg bg-white border border-slate-200 p-3"
+                >
+                  <p className="text-xs text-slate-500">
+                    {feature.label}
+                  </p>
 
-              <div className="p-2.5 rounded bg-white border border-slate-200/80">
-                <span className="text-[10px] text-slate-400 block font-medium">Revenue</span>
-                <span className="font-semibold text-slate-800 mt-0.5 block">
-                  {actualMetrics?.total_revenue ? formatINR(actualMetrics.total_revenue) : "—"}
-                </span>
-              </div>
-
-              <div className="p-2.5 rounded bg-white border border-slate-200/80">
-                <span className="text-[10px] text-slate-400 block font-medium">Expense</span>
-                <span className="font-semibold text-slate-800 mt-0.5 block">
-                  {actualMetrics?.total_expense ? formatINR(actualMetrics.total_expense) : "—"}
-                </span>
-              </div>
-
-              <div className="p-2.5 rounded bg-white border border-slate-200/80">
-                <span className="text-[10px] text-slate-400 block font-medium">Profit Margin</span>
-                <span className="font-semibold text-slate-800 mt-0.5 block">
-                  {actualMetrics?.profit_margin !== undefined ? `${actualMetrics.profit_margin.toFixed(1)}%` : "—"}
-                </span>
-              </div>
-
-              <div className="p-2.5 rounded bg-white border border-slate-200/80">
-                <span className="text-[10px] text-slate-400 block font-medium">Rev / Unit</span>
-                <span className="font-semibold text-slate-800 mt-0.5 block">
-                  {actualMetrics?.total_sales && actualMetrics.total_revenue
-                    ? formatINR(actualMetrics.total_revenue / actualMetrics.total_sales)
-                    : "—"}
-                </span>
-              </div>
-
-              <div className="p-2.5 rounded bg-white border border-slate-200/80">
-                <span className="text-[10px] text-slate-400 block font-medium">Exp / Unit</span>
-                <span className="font-semibold text-slate-800 mt-0.5 block">
-                  {actualMetrics?.total_sales && actualMetrics.total_expense
-                    ? formatINR(actualMetrics.total_expense / actualMetrics.total_sales)
-                    : "—"}
-                </span>
-              </div>
+                  <p className="text-sm font-bold text-slate-900 mt-1 break-words">
+                    {feature.value}
+                  </p>
+                </div>
+              ))}
             </div>
-          </div>
 
-          {/* Model Limitation Note */}
-          <div className="p-3.5 rounded-lg bg-blue-50/50 border border-blue-200/70 flex items-start gap-2.5 text-xs text-slate-600">
-            <Shield className="w-4 h-4 text-blue-600 shrink-0 mt-0.5" />
-            <p className="leading-relaxed">
-              <strong>Model Limitation Notice:</strong> Predicted profit is an algorithmic regression output based on historical training patterns and the six prepared unit features above. Business outcomes are subject to operational conditions, market volatility, and unmodeled external factors; predictions do not constitute guaranteed earnings.
+            <p className="text-xs text-slate-500 mt-3">
+              These values summarize the uploaded dataset.
+              The model receives features calculated for
+              each individual record.
             </p>
           </div>
-        </div>
+
+          <div className="flex items-start gap-3 bg-blue-50/60 border border-blue-200 rounded-xl p-4">
+            <ShieldCheck className="w-5 h-5 text-blue-600 shrink-0" />
+
+            <p className="text-xs leading-relaxed text-slate-600">
+              <strong>Model Limitation:</strong> Predictions
+              are generated using a Random Forest model.
+              They are estimates, not guaranteed outcomes.
+              Model accuracy must be evaluated on sufficient,
+              representative data before using predictions
+              for real business decisions.
+            </p>
+          </div>
+        </>
       )}
     </div>
   );

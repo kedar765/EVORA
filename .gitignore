@@ -62,3 +62,15 @@ ehthumbs.db
 *.swp
 *.swo
 *~
+
+# EVORA SQLite Database
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
+
+# Private keys and credentials
+*.pem
+*.key
+credentials.json

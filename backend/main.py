@@ -1,27 +1,40 @@
-from fastapi import FastAPI, UploadFile, File, HTTPException
-from pydantic import BaseModel
-from fastapi.middleware.cors import CORSMiddleware
+
+import io
+import os
+import sys
+
+from pathlib import Path
+from urllib.parse import urlsplit
+
 import joblib
 import pandas as pd
-import sys
-from pathlib import Path
-import io
+
+from fastapi import (
+    Depends,
+    FastAPI,
+    File,
+    HTTPException,
+    Request,
+    UploadFile,
+)
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+from pydantic import BaseModel
+
 
 ROOT_DIR = Path(__file__).resolve().parent.parent
 sys.path.append(str(ROOT_DIR))
 
-from backend.features import prepare_features
 from agents.analytics_agent import AnalyticsAgent
 from agents.risk_agent import RiskAgent
+from backend.auth import get_current_user, router as auth_router
+from backend.features import prepare_features
 
-
-analytics_agent = AnalyticsAgent()
-risk_agent = RiskAgent()
 
 app = FastAPI(
     title="EVORA API",
     description="AI Business Intelligence & Decision Optimization System",
-    version="1.0.0"
+    version="1.0.0",
 )
 
 app.add_middleware(
@@ -35,39 +48,272 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-MODEL_PATH = ROOT_DIR / "ml" / "profit_model.pkl"
-ANOMALY_MODEL_PATH = ROOT_DIR / "ml" / "anomaly_model.pkl"
-
-try:
-    model = joblib.load(MODEL_PATH)
-    print("Profit ML model loaded successfully.")
-except Exception as e:
-    model = None
-    print(f"Warning: Could not load ML model: {e}")
-
-try:
-    anomaly_model = joblib.load(ANOMALY_MODEL_PATH)
-    print("Anomaly model loaded successfully.")
-except Exception as e:
-    anomaly_model = None
-    print(f"Warning: Could not load anomaly model: {e}")
+app.include_router(auth_router)
 
 
-# ---------------------------------------------------------------
-# Helper: convert numpy values to plain Python types for JSON.
-# Fixes "TypeError: 'numpy.bool' object is not iterable" errors.
-# ---------------------------------------------------------------
-def to_python(value):
-    if hasattr(value, "item"):
-        return value.item()
-    return value
+# ---------------------------------------
+# CSRF Origin Protection
+# ---------------------------------------
 
+TRUSTED_ORIGINS = {
+    origin.strip().rstrip("/")
+    for origin in os.getenv(
+        "EVORA_TRUSTED_ORIGINS",
+        ",".join([
+            "http://localhost:3000",
+            "http://127.0.0.1:3000",
+            "http://localhost:8000",
+            "http://127.0.0.1:8000",
+        ]),
+    ).split(",")
+    if origin.strip()
+}
+
+SAFE_METHODS = {
+    "GET",
+    "HEAD",
+    "OPTIONS",
+}
+
+
+def get_request_origin(request: Request):
+    origin = request.headers.get("origin")
+
+    if origin:
+        return origin
+
+    referer = request.headers.get("referer")
+
+    if not referer:
+        return None
+
+    try:
+        parsed = urlsplit(referer)
+
+        if (
+            parsed.scheme not in ("http", "https")
+            or not parsed.netloc
+        ):
+            return None
+
+        return f"{parsed.scheme}://{parsed.netloc}"
+
+    except ValueError:
+        return None
+
+
+@app.middleware("http")
+async def csrf_origin_guard(
+    request: Request,
+    call_next,
+):
+    if request.method in SAFE_METHODS:
+        return await call_next(request)
+
+    origin = get_request_origin(request)
+
+    if origin not in TRUSTED_ORIGINS:
+        return JSONResponse(
+            status_code=403,
+            content={
+                "detail": (
+                    "CSRF protection: "
+                    "untrusted request origin."
+                )
+            },
+        )
+
+    return await call_next(request)
+
+
+# ---------------------------------------
+# Agents and ML Models
+# ---------------------------------------
+
+analytics_agent = AnalyticsAgent()
+risk_agent = RiskAgent()
+
+MODEL_FEATURES = [
+    "Quantity",
+    "Revenue",
+    "Expense",
+    "Profit_Margin",
+    "Revenue_per_Unit",
+    "Expense_per_Unit",
+]
+
+
+def load_model(filename: str):
+    try:
+        loaded_model = joblib.load(
+            ROOT_DIR / "ml" / filename
+        )
+        print(f"Model loaded: {filename}")
+        return loaded_model
+
+    except Exception as exc:
+        print(f"Could not load {filename}: {exc}")
+        return None
+
+
+model = load_model("profit_model.pkl")
+anomaly_model = load_model("anomaly_model.pkl")
+
+
+def require_profit_model():
+    if model is None:
+        raise HTTPException(
+            status_code=503,
+            detail="Profit ML model unavailable.",
+        )
+
+
+# ---------------------------------------
+# Risk Scoring
+# ---------------------------------------
+
+def risk_details(
+    predicted_profit: float | None,
+    anomaly_detected: bool,
+    profit_margin: float,
+):
+    score = 60 if anomaly_detected else 10
+
+    if profit_margin < 0:
+        score += 25
+    elif profit_margin < 10:
+        score += 15
+    elif profit_margin < 20:
+        score += 5
+
+    if predicted_profit is not None and predicted_profit < 0:
+        score += 15
+
+    score = int(max(0, min(100, score)))
+
+    level = (
+        "LOW"
+        if score <= 30
+        else "MEDIUM"
+        if score <= 60
+        else "HIGH"
+    )
+
+    return score, level
+
+
+# ---------------------------------------
+# Feature Preparation
+# ---------------------------------------
+
+def make_feature_frame(
+    quantity: float,
+    revenue: float,
+    expense: float,
+):
+    return prepare_features(
+        pd.DataFrame(
+            [
+                {
+                    "Quantity": quantity,
+                    "Revenue": revenue,
+                    "Expense": expense,
+                }
+            ]
+        )
+    )
+
+
+# ---------------------------------------
+# CSV Validation
+# ---------------------------------------
+
+async def read_business_csv(
+    file: UploadFile,
+    required_columns: list[str],
+):
+    if (
+        not file.filename
+        or not file.filename.lower().endswith(".csv")
+    ):
+        raise HTTPException(
+            status_code=400,
+            detail="Please select a CSV file.",
+        )
+
+    try:
+        contents = await file.read()
+
+        dataframe = pd.read_csv(
+            io.BytesIO(contents)
+        )
+
+    except (
+        pd.errors.EmptyDataError,
+        pd.errors.ParserError,
+        UnicodeDecodeError,
+    ) as exc:
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid or empty CSV file.",
+        ) from exc
+
+    if dataframe.empty:
+        raise HTTPException(
+            status_code=400,
+            detail="The uploaded CSV file is empty.",
+        )
+
+    dataframe.columns = [
+        str(column).strip()
+        for column in dataframe.columns
+    ]
+
+    missing = [
+        column
+        for column in required_columns
+        if column not in dataframe.columns
+    ]
+
+    if missing:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "message": "Required columns are missing from CSV.",
+                "missing_columns": missing,
+                "required_columns": required_columns,
+                "available_columns": list(dataframe.columns),
+            },
+        )
+
+    for column in required_columns:
+        dataframe[column] = pd.to_numeric(
+            dataframe[column],
+            errors="coerce",
+        )
+
+    dataframe = dataframe.dropna(
+        subset=required_columns
+    )
+
+    if dataframe.empty:
+        raise HTTPException(
+            status_code=400,
+            detail="No valid numeric data found.",
+        )
+
+    return dataframe
+
+
+# ---------------------------------------
+# Public Endpoints
+# ---------------------------------------
 
 @app.get("/")
 def root():
     return {
         "message": "EVORA Backend is running successfully.",
-        "status": "online"
+        "status": "online",
     }
 
 
@@ -75,206 +321,153 @@ def root():
 def health():
     return {
         "status": "healthy",
-        "service": "EVORA Backend"
+        "service": "EVORA Backend",
     }
 
 
-@app.post("/upload")
-async def upload_csv(file: UploadFile = File(...)):
+# ---------------------------------------
+# CSV Upload and Business Analysis
+# ---------------------------------------
 
-    if not file.filename:
-        raise HTTPException(status_code=400, detail="No file selected.")
+@app.post(
+    "/upload",
+    dependencies=[Depends(get_current_user)],
+)
+async def upload_csv(
+    file: UploadFile = File(...),
+):
+    df = await read_business_csv(
+        file,
+        ["Quantity", "Revenue", "Expense"],
+    )
 
-    if not file.filename.lower().endswith(".csv"):
-        raise HTTPException(status_code=400, detail="Please upload a CSV file.")
+    df["Profit"] = (
+        df["Revenue"] - df["Expense"]
+    )
 
-    try:
-        contents = await file.read()
-        df = pd.read_csv(io.BytesIO(contents))
+    total_revenue = float(df["Revenue"].sum())
+    total_expense = float(df["Expense"].sum())
+    total_profit = float(df["Profit"].sum())
 
-        if df.empty:
-            raise HTTPException(
-                status_code=400,
-                detail="The uploaded CSV file is empty."
-            )
+    profit_margin = (
+        total_profit / total_revenue * 100
+        if total_revenue
+        else 0.0
+    )
 
-        print("\n========================================")
-        print("CSV RECEIVED")
-        print("========================================")
-        print("Filename:", file.filename)
-        print("Rows:", len(df))
-        print("Columns:", list(df.columns))
+    features = prepare_features(
+        df[
+            ["Quantity", "Revenue", "Expense"]
+        ].copy()
+    )
 
-        df.columns = [str(col).strip() for col in df.columns]
-
-        required_columns = ["Quantity", "Revenue", "Expense"]
-
-        missing_columns = [
-            col for col in required_columns if col not in df.columns
-        ]
-
-        if missing_columns:
-            raise HTTPException(
-                status_code=400,
-                detail={
-                    "message": "Required columns are missing from CSV.",
-                    "missing_columns": missing_columns,
-                    "required_columns": required_columns,
-                    "available_columns": list(df.columns)
-                }
-            )
-
-        df["Quantity"] = pd.to_numeric(df["Quantity"], errors="coerce")
-        df["Revenue"] = pd.to_numeric(df["Revenue"], errors="coerce")
-        df["Expense"] = pd.to_numeric(df["Expense"], errors="coerce")
-
-        df = df.dropna(subset=["Quantity", "Revenue", "Expense"])
-
-        if df.empty:
-            raise HTTPException(
-                status_code=400,
-                detail="No valid numeric data found in Quantity, Revenue and Expense columns."
-            )
-
-        df["Profit"] = df["Revenue"] - df["Expense"]
-
-        total_revenue = float(df["Revenue"].sum())
-        total_expense = float(df["Expense"].sum())
-        total_profit = float(df["Profit"].sum())
-        total_sales = float(df["Quantity"].sum())
-        average_revenue = float(df["Revenue"].mean())
-        average_expense = float(df["Expense"].mean())
-        average_profit = float(df["Profit"].mean())
-
-        if total_revenue != 0:
-            profit_margin = (total_profit / total_revenue) * 100
-        else:
-            profit_margin = 0.0
-
-        feature_df = prepare_features(
-            df[["Quantity", "Revenue", "Expense"]].copy()
+    predicted_profit = (
+        float(
+            model.predict(
+                features[MODEL_FEATURES]
+            ).mean()
         )
+        if model is not None
+        else None
+    )
 
-        features = [
-            "Quantity",
-            "Revenue",
-            "Expense",
-            "Profit_Margin",
-            "Revenue_per_Unit",
-            "Expense_per_Unit"
-        ]
+    anomaly_count = 0
+    anomaly_indices = []
 
-        # 1. Profit Prediction (Random Forest)
-        predicted_profit = None
-        if model is not None:
-            missing_features = [
-                feature for feature in features
-                if feature not in feature_df.columns
+    if anomaly_model is not None:
+        try:
+            results = anomaly_model.predict(
+                features[MODEL_FEATURES]
+            )
+
+            anomaly_indices = [
+                int(index)
+                for index, value in enumerate(results)
+                if value == -1
             ]
-            if not missing_features:
-                prediction = model.predict(feature_df[features])
-                predicted_profit = float(prediction.mean())
 
-        # 2. Anomaly Detection (Isolation Forest)
-        anomaly_detected = False
-        anomaly_count = 0
-        anomaly_indices = []
-        if anomaly_model is not None:
-            try:
-                anomaly_predictions = anomaly_model.predict(feature_df[features])
-                anomaly_count = int((anomaly_predictions == -1).sum())
-                anomaly_detected = bool(anomaly_count > 0)
-                anomaly_indices = [int(i) for i, pred in enumerate(anomaly_predictions) if pred == -1]
-            except Exception as ae:
-                print(f"Warning: Anomaly detection error: {ae}")
+            anomaly_count = len(
+                anomaly_indices
+            )
 
-        # 3. Risk Calculation
-        risk_score = 0
-        if anomaly_detected:
-            risk_score += 60
-        else:
-            risk_score += 10
+        except Exception as exc:
+            print(
+                f"Anomaly detection error: {exc}"
+            )
 
-        if profit_margin < 0:
-            risk_score += 25
-        elif profit_margin < 10:
-            risk_score += 15
-        elif profit_margin < 20:
-            risk_score += 5
+    anomaly_detected = anomaly_count > 0
 
-        if predicted_profit is not None and predicted_profit < 0:
-            risk_score += 15
+    score, level = risk_details(
+        predicted_profit,
+        anomaly_detected,
+        profit_margin,
+    )
 
-        risk_score = int(max(0, min(100, risk_score)))
+    risk_analysis = risk_agent.analyze(
+        predicted_profit=(
+            predicted_profit
+            if predicted_profit is not None
+            else total_profit
+        ),
+        anomaly_detected=anomaly_detected,
+        risk_score=score,
+        risk_level=level,
+    )
 
-        if risk_score <= 30:
-            risk_level = "LOW"
-        elif risk_score <= 60:
-            risk_level = "MEDIUM"
-        else:
-            risk_level = "HIGH"
+    analytics_result = analytics_agent.analyze(
+        df
+    )
 
-        # 4. Risk Agent Analysis
-        risk_analysis = risk_agent.analyze(
-            predicted_profit=predicted_profit if predicted_profit is not None else total_profit,
-            anomaly_detected=anomaly_detected,
-            risk_score=risk_score,
-            risk_level=risk_level
-        )
+    if level == "LOW" and total_profit > 0:
+        status = "Healthy & Profitable"
 
-        # 5. Analytics Agent Analysis
-        analytics_result = analytics_agent.analyze(df)
+    elif level == "MEDIUM":
+        status = "Moderate Risk — Review Recommended"
 
-        # 6. Overall Business Status Determination
-        if risk_level == "LOW" and total_profit > 0:
-            business_status = "Healthy & Profitable"
-        elif risk_level == "MEDIUM":
-            business_status = "Moderate Risk — Review Recommended"
-        elif total_profit < 0:
-            business_status = "Critical — Operating at a Loss"
-        else:
-            business_status = "High Risk — Anomalies Detected"
+    elif total_profit < 0:
+        status = "Critical — Operating at a Loss"
 
-        return {
-            "success": True,
-            "message": "CSV processed and analyzed successfully.",
-            "filename": file.filename,
-            "rows_processed": int(len(df)),
-            "metrics": {
-                "total_revenue": total_revenue,
-                "total_expense": total_expense,
-                "total_profit": total_profit,
-                "total_sales": total_sales,
-                "average_revenue": average_revenue,
-                "average_expense": average_expense,
-                "average_profit": average_profit,
-                "profit_margin": profit_margin
-            },
-            "predicted_profit": predicted_profit,
-            "anomaly_detected": anomaly_detected,
-            "anomaly_count": anomaly_count,
-            "anomaly_indices": anomaly_indices,
-            "risk_score": risk_score,
-            "risk_level": risk_level,
-            "risk_analysis": risk_analysis,
-            "analytics": analytics_result,
-            "business_status": business_status
-        }
+    else:
+        status = "High Risk — Anomalies Detected"
 
-    except HTTPException:
-        raise
+    return {
+        "success": True,
+        "message": "CSV processed and analyzed successfully.",
+        "filename": file.filename,
+        "rows_processed": int(len(df)),
+        "metrics": {
+            "total_revenue": total_revenue,
+            "total_expense": total_expense,
+            "total_profit": total_profit,
+            "total_sales": float(
+                df["Quantity"].sum()
+            ),
+            "average_revenue": float(
+                df["Revenue"].mean()
+            ),
+            "average_expense": float(
+                df["Expense"].mean()
+            ),
+            "average_profit": float(
+                df["Profit"].mean()
+            ),
+            "profit_margin": profit_margin,
+        },
+        "predicted_profit": predicted_profit,
+        "anomaly_detected": anomaly_detected,
+        "anomaly_count": anomaly_count,
+        "anomaly_indices": anomaly_indices,
+        "risk_score": score,
+        "risk_level": level,
+        "risk_analysis": risk_analysis,
+        "analytics": analytics_result,
+        "business_status": status,
+    }
 
-    except Exception as e:
-        print("\nCSV processing error:")
-        print(str(e))
-        raise HTTPException(
-            status_code=500,
-            detail={
-                "message": "Failed to process CSV file.",
-                "error": str(e)
-            }
-        )
 
+# ---------------------------------------
+# ML Profit Prediction
+# ---------------------------------------
 
 class ProfitPredictionRequest(BaseModel):
     Quantity: float
@@ -282,310 +475,191 @@ class ProfitPredictionRequest(BaseModel):
     Expense: float
 
 
-@app.post("/ml/predict-profit")
-def predict_profit(data: ProfitPredictionRequest):
+@app.post(
+    "/ml/predict-profit",
+    dependencies=[Depends(get_current_user)],
+)
+def predict_profit(
+    data: ProfitPredictionRequest,
+):
+    require_profit_model()
 
-    if model is None:
-        raise HTTPException(
-            status_code=500,
-            detail="ML model could not be loaded."
-        )
+    df = make_feature_frame(
+        data.Quantity,
+        data.Revenue,
+        data.Expense,
+    )
 
-    try:
-        df = pd.DataFrame([{
-            "Quantity": data.Quantity,
-            "Revenue": data.Revenue,
-            "Expense": data.Expense
-        }])
+    prediction = float(
+        model.predict(
+            df[MODEL_FEATURES]
+        )[0]
+    )
 
-        df = prepare_features(df)
-
-        features = [
-            "Quantity",
-            "Revenue",
-            "Expense",
-            "Profit_Margin",
-            "Revenue_per_Unit",
-            "Expense_per_Unit"
-        ]
-
-        missing_features = [
-            feature for feature in features if feature not in df.columns
-        ]
-
-        if missing_features:
-            raise HTTPException(
-                status_code=500,
-                detail={
-                    "message": "Required ML features are missing.",
-                    "missing_features": missing_features
-                }
-            )
-
-        prediction = model.predict(df[features])
-        predicted_profit = float(prediction[0])
-
-        return {
-            "success": True,
-            "predicted_profit": predicted_profit
-        }
-
-    except HTTPException:
-        raise
-
-    except Exception as e:
-        print("\nML prediction error:")
-        print(str(e))
-        raise HTTPException(
-            status_code=500,
-            detail={
-                "message": "Profit prediction failed.",
-                "error": str(e)
-            }
-        )
+    return {
+        "success": True,
+        "predicted_profit": prediction,
+    }
 
 
-class RiskAnalysisRequest(BaseModel):
-    Quantity: float
-    Revenue: float
-    Expense: float
+# ---------------------------------------
+# Risk Intelligence
+# ---------------------------------------
+
+class RiskAnalysisRequest(ProfitPredictionRequest):
+    pass
 
 
-@app.post("/analyze-risk")
-def analyze_risk(data: RiskAnalysisRequest):
-
-    if model is None:
-        raise HTTPException(
-            status_code=500,
-            detail="Profit ML model could not be loaded."
-        )
+@app.post(
+    "/analyze-risk",
+    dependencies=[Depends(get_current_user)],
+)
+def analyze_risk(
+    data: RiskAnalysisRequest,
+):
+    require_profit_model()
 
     if anomaly_model is None:
         raise HTTPException(
-            status_code=500,
-            detail="Anomaly model could not be loaded."
+            status_code=503,
+            detail="Anomaly model unavailable.",
         )
 
-    try:
-        df = pd.DataFrame([{
-            "Quantity": data.Quantity,
-            "Revenue": data.Revenue,
-            "Expense": data.Expense
-        }])
+    df = make_feature_frame(
+        data.Quantity,
+        data.Revenue,
+        data.Expense,
+    )
 
-        df = prepare_features(df)
+    predicted_profit = float(
+        model.predict(
+            df[MODEL_FEATURES]
+        )[0]
+    )
 
-        features = [
-            "Quantity",
-            "Revenue",
-            "Expense",
-            "Profit_Margin",
-            "Revenue_per_Unit",
-            "Expense_per_Unit"
-        ]
+    anomaly_detected = bool(
+        anomaly_model.predict(
+            df[MODEL_FEATURES]
+        )[0] == -1
+    )
 
-        prediction = model.predict(df[features])
-        predicted_profit = float(prediction[0])
+    profit_margin = float(
+        df["Profit_Margin"].iloc[0]
+    )
 
-        anomaly_prediction = anomaly_model.predict(df[features])[0]
+    score, level = risk_details(
+        predicted_profit,
+        anomaly_detected,
+        profit_margin,
+    )
 
-        # FIX: numpy bool -> python bool
-        anomaly_detected = bool(anomaly_prediction == -1)
+    risk_analysis = risk_agent.analyze(
+        predicted_profit=predicted_profit,
+        anomaly_detected=anomaly_detected,
+        risk_score=score,
+        risk_level=level,
+    )
 
-        profit_margin = float(df["Profit_Margin"].iloc[0])
+    return {
+        "success": True,
+        "predicted_profit": predicted_profit,
+        "anomaly_detected": anomaly_detected,
+        "risk_score": score,
+        "risk_level": level,
+        "risk_analysis": risk_analysis,
+    }
 
-        risk_score = 0
 
-        if anomaly_detected:
-            risk_score += 60
-        else:
-            risk_score += 10
-
-        if profit_margin < 0:
-            risk_score += 25
-        elif profit_margin < 10:
-            risk_score += 15
-        elif profit_margin < 20:
-            risk_score += 5
-
-        if predicted_profit < 0:
-            risk_score += 15
-
-        # FIX: numpy int -> python int
-        risk_score = int(max(0, min(100, risk_score)))
-
-        if risk_score <= 30:
-            risk_level = "LOW"
-        elif risk_score <= 60:
-            risk_level = "MEDIUM"
-        else:
-            risk_level = "HIGH"
-
-        risk_analysis = risk_agent.analyze(
-            predicted_profit=predicted_profit,
-            anomaly_detected=anomaly_detected,
-            risk_score=risk_score,
-            risk_level=risk_level
-        )
-
-        # FIX: every value returned is a plain Python type
-        return {
-            "success": True,
-            "predicted_profit": float(predicted_profit),
-            "anomaly_detected": bool(anomaly_detected),
-            "risk_score": int(risk_score),
-            "risk_level": str(risk_level),
-            "risk_analysis": risk_analysis
-        }
-
-    except HTTPException:
-        raise
-
-    except Exception as e:
-        print("\nRisk analysis error:")
-        print(str(e))
-        raise HTTPException(
-            status_code=500,
-            detail={
-                "message": "Risk analysis failed.",
-                "error": str(e)
-            }
-        )
-
+# ---------------------------------------
+# What-If Analysis
+# ---------------------------------------
 
 class WhatIfRequest(BaseModel):
     current_quantity: float
     current_revenue: float
     current_expense: float
+
     new_quantity: float
     new_revenue: float
     new_expense: float
 
 
-@app.post("/what-if")
-def what_if_analysis(data: WhatIfRequest):
+@app.post(
+    "/what-if",
+    dependencies=[Depends(get_current_user)],
+)
+def what_if_analysis(
+    data: WhatIfRequest,
+):
+    require_profit_model()
 
-    if model is None:
-        raise HTTPException(
-            status_code=500,
-            detail="Profit ML model could not be loaded."
-        )
+    current_df = make_feature_frame(
+        data.current_quantity,
+        data.current_revenue,
+        data.current_expense,
+    )
 
-    current_df = pd.DataFrame([{
-        "Quantity": data.current_quantity,
-        "Revenue": data.current_revenue,
-        "Expense": data.current_expense
-    }])
+    new_df = make_feature_frame(
+        data.new_quantity,
+        data.new_revenue,
+        data.new_expense,
+    )
 
-    new_df = pd.DataFrame([{
-        "Quantity": data.new_quantity,
-        "Revenue": data.new_revenue,
-        "Expense": data.new_expense
-    }])
+    current_profit = float(
+        model.predict(
+            current_df[MODEL_FEATURES]
+        )[0]
+    )
 
-    current_df = prepare_features(current_df)
-    new_df = prepare_features(new_df)
+    new_profit = float(
+        model.predict(
+            new_df[MODEL_FEATURES]
+        )[0]
+    )
 
-    features = [
-        "Quantity",
-        "Revenue",
-        "Expense",
-        "Profit_Margin",
-        "Revenue_per_Unit",
-        "Expense_per_Unit"
-    ]
+    difference = new_profit - current_profit
 
-    current_profit = model.predict(current_df[features])[0]
-    new_profit = model.predict(new_df[features])[0]
-
-    profit_difference = new_profit - current_profit
-
-    if profit_difference > 0:
+    if difference > 0:
         result = "Profit may increase"
-    elif profit_difference < 0:
+
+    elif difference < 0:
         result = "Profit may decrease"
+
     else:
         result = "No significant change"
 
     return {
         "success": True,
-        "current_predicted_profit": round(float(current_profit), 2),
-        "new_predicted_profit": round(float(new_profit), 2),
-        "profit_difference": round(float(profit_difference), 2),
-        "result": result
+        "current_predicted_profit": round(
+            current_profit, 2
+        ),
+        "new_predicted_profit": round(
+            new_profit, 2
+        ),
+        "profit_difference": round(
+            difference, 2
+        ),
+        "result": result,
     }
 
 
-@app.post("/analytics")
-async def analytics(file: UploadFile = File(...)):
+# ---------------------------------------
+# Business Analytics
+# ---------------------------------------
 
-    if not file.filename:
-        raise HTTPException(status_code=400, detail="No file selected.")
+@app.post(
+    "/analytics",
+    dependencies=[Depends(get_current_user)],
+)
+async def analytics(
+    file: UploadFile = File(...),
+):
+    df = await read_business_csv(
+        file,
+        ["Revenue", "Expense"],
+    )
 
-    if not file.filename.lower().endswith(".csv"):
-        raise HTTPException(
-            status_code=400,
-            detail="Only CSV files are supported."
-        )
-
-    try:
-        contents = await file.read()
-        df = pd.read_csv(io.BytesIO(contents))
-
-        if df.empty:
-            raise HTTPException(
-                status_code=400,
-                detail="The uploaded CSV file is empty."
-            )
-
-        df.columns = [str(col).strip() for col in df.columns]
-
-        required_columns = ["Revenue", "Expense"]
-
-        missing_columns = [
-            column for column in required_columns
-            if column not in df.columns
-        ]
-
-        if missing_columns:
-            raise HTTPException(
-                status_code=400,
-                detail={
-                    "message": "Required columns are missing.",
-                    "missing_columns": missing_columns,
-                    "required_columns": required_columns,
-                    "available_columns": list(df.columns)
-                }
-            )
-
-        df["Revenue"] = pd.to_numeric(df["Revenue"], errors="coerce")
-        df["Expense"] = pd.to_numeric(df["Expense"], errors="coerce")
-
-        df = df.dropna(subset=["Revenue", "Expense"])
-
-        if df.empty:
-            raise HTTPException(
-                status_code=400,
-                detail="No valid numeric data found."
-            )
-
-        result = analytics_agent.analyze(df)
-
-        return {
-            "success": True,
-            "analysis": result
-        }
-
-    except HTTPException:
-        raise
-
-    except Exception as e:
-        print("\nAnalytics error:")
-        print(str(e))
-        raise HTTPException(
-            status_code=500,
-            detail={
-                "message": "Analytics failed.",
-                "error": str(e)
-            }
-        )
+    return {
+        "success": True,
+        "analysis": analytics_agent.analyze(df),
+    }

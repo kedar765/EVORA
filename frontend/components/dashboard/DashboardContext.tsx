@@ -1,7 +1,23 @@
+
 "use client";
 
-import React, { createContext, useContext, useState, ReactNode } from "react";
-import { UploadResult, DatasetPreviewData, FullDatasetData, ParsedRecord } from "./types";
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useState,
+  type ReactNode,
+} from "react";
+
+import { useAuth } from "@/lib/auth";
+
+import type {
+  UploadResult,
+  DatasetPreviewData,
+  FullDatasetData,
+  ParsedRecord,
+} from "./types";
 
 interface DashboardContextType {
   uploadResult: UploadResult | null;
@@ -10,43 +26,143 @@ interface DashboardContextType {
   isUploading: boolean;
   setIsUploading: (loading: boolean) => void;
   setUploadResult: (result: UploadResult | null) => void;
-  handleUploadSuccess: (data: UploadResult, rawCsvText?: string) => void;
+  handleUploadSuccess: (
+    data: UploadResult,
+    rawCsvText?: string
+  ) => void;
   clearDataset: () => void;
 }
 
-const DashboardContext = createContext<DashboardContextType | undefined>(undefined);
+interface StoredUserData<T> {
+  userId: string;
+  data: T;
+}
 
-const UPLOAD_STORAGE_KEY = "evora_active_upload";
-const PREVIEW_STORAGE_KEY = "evora_dataset_preview";
-const DATASET_STORAGE_KEY = "evora_full_dataset";
+const STORAGE_KEYS = {
+  upload: "evora_active_upload",
+  preview: "evora_dataset_preview",
+  dataset: "evora_full_dataset",
+};
+
+const DashboardContext = createContext<
+  DashboardContextType | undefined
+>(undefined);
+
+function removeStoredData(): void {
+  try {
+    Object.values(STORAGE_KEYS).forEach((key) => {
+      sessionStorage.removeItem(key);
+    });
+  } catch {
+    // Browser storage may be unavailable.
+  }
+}
+
+function saveStoredData<T>(
+  key: string,
+  userId: string,
+  data: T
+): void {
+  try {
+    const value: StoredUserData<T> = {
+      userId,
+      data,
+    };
+
+    sessionStorage.setItem(
+      key,
+      JSON.stringify(value)
+    );
+  } catch (error) {
+    console.warn(
+      "Unable to save dashboard session data:",
+      error
+    );
+  }
+}
+
+function readStoredData<T>(
+  key: string,
+  userId: string
+): T | null {
+  try {
+    const stored = sessionStorage.getItem(key);
+
+    if (!stored) return null;
+
+    const parsed = JSON.parse(
+      stored
+    ) as Partial<StoredUserData<T>>;
+
+    if (
+      parsed.userId !== userId ||
+      parsed.data == null
+    ) {
+      sessionStorage.removeItem(key);
+      return null;
+    }
+
+    return parsed.data;
+  } catch {
+    try {
+      sessionStorage.removeItem(key);
+    } catch {
+      // Ignore storage errors.
+    }
+
+    return null;
+  }
+}
 
 function parseCsvLine(line: string): string[] {
-  const result: string[] = [];
+  const values: string[] = [];
   let current = "";
   let insideQuotes = false;
+
   for (let i = 0; i < line.length; i++) {
     const char = line[i];
+
     if (char === '"') {
-      insideQuotes = !insideQuotes;
-    } else if (char === "," && !insideQuotes) {
-      result.push(current.trim());
+      if (
+        insideQuotes &&
+        line[i + 1] === '"'
+      ) {
+        current += '"';
+        i++;
+      } else {
+        insideQuotes = !insideQuotes;
+      }
+    } else if (
+      char === "," &&
+      !insideQuotes
+    ) {
+      values.push(current.trim());
       current = "";
     } else {
       current += char;
     }
   }
-  result.push(current.trim());
-  return result;
+
+  values.push(current.trim());
+
+  return values;
 }
 
-export function parseFullCsv(csvText: string): FullDatasetData {
+export function parseFullCsv(
+  csvText: string
+): FullDatasetData {
   const lines = csvText
+    .replace(/^\uFEFF/, "")
     .split(/\r?\n/)
-    .map((line) => line.trim())
-    .filter((line) => line.length > 0);
+    .filter((line) => line.trim() !== "");
 
   if (lines.length === 0) {
-    return { headers: [], records: [], totalRows: 0, rawCsvText: csvText };
+    return {
+      headers: [],
+      records: [],
+      totalRows: 0,
+      rawCsvText: csvText,
+    };
   }
 
   const headers = parseCsvLine(lines[0]);
@@ -55,11 +171,18 @@ export function parseFullCsv(csvText: string): FullDatasetData {
   for (let i = 1; i < lines.length; i++) {
     const cells = parseCsvLine(lines[i]);
     const record: ParsedRecord = {};
-    headers.forEach((header, colIdx) => {
-      const val = cells[colIdx] ?? "";
-      const numVal = Number(val);
-      record[header] = !isNaN(numVal) && val !== "" ? numVal : val;
+
+    headers.forEach((header, index) => {
+      const value = cells[index] ?? "";
+      const numericValue = Number(value);
+
+      record[header] =
+        value !== "" &&
+        Number.isFinite(numericValue)
+          ? numericValue
+          : value;
     });
+
     records.push(record);
   }
 
@@ -71,104 +194,199 @@ export function parseFullCsv(csvText: string): FullDatasetData {
   };
 }
 
-export function parseCsvToPreview(csvText: string, maxRows = 6): DatasetPreviewData {
-  const lines = csvText
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .filter((line) => line.length > 0);
-
-  if (lines.length === 0) {
-    return { headers: [], rows: [], totalRows: 0 };
-  }
-
-  const headers = parseCsvLine(lines[0]);
-  const rows = lines.slice(1, maxRows + 1).map((line) => parseCsvLine(line));
+export function parseCsvToPreview(
+  csvText: string,
+  maxRows = 6
+): DatasetPreviewData {
+  const dataset = parseFullCsv(csvText);
 
   return {
-    headers,
-    rows,
-    totalRows: lines.length - 1,
+    headers: dataset.headers,
+    rows: dataset.records
+      .slice(0, maxRows)
+      .map((record) =>
+        dataset.headers.map((header) =>
+          String(record[header] ?? "")
+        )
+      ),
+    totalRows: dataset.totalRows,
   };
 }
 
-function getInitialUpload(): UploadResult | null {
-  if (typeof window === "undefined") return null;
-  try {
-    const stored = sessionStorage.getItem(UPLOAD_STORAGE_KEY);
-    return stored ? JSON.parse(stored) : null;
-  } catch {
-    return null;
-  }
-}
+export function DashboardProvider({
+  children,
+}: {
+  children: ReactNode;
+}) {
+  const { user, isAuthenticated } = useAuth();
 
-function getInitialPreview(): DatasetPreviewData | null {
-  if (typeof window === "undefined") return null;
-  try {
-    const stored = sessionStorage.getItem(PREVIEW_STORAGE_KEY);
-    return stored ? JSON.parse(stored) : null;
-  } catch {
-    return null;
-  }
-}
+  const userId =
+    isAuthenticated && user?.id
+      ? user.id
+      : null;
 
-function getInitialFullDataset(): FullDatasetData | null {
-  if (typeof window === "undefined") return null;
-  try {
-    const stored = sessionStorage.getItem(DATASET_STORAGE_KEY);
-    return stored ? JSON.parse(stored) : null;
-  } catch {
-    return null;
-  }
-}
+  const [uploadResult, setUploadResultState] =
+    useState<UploadResult | null>(null);
 
-export function DashboardProvider({ children }: { children: ReactNode }) {
-  const [uploadResult, setUploadResultState] = useState<UploadResult | null>(getInitialUpload);
-  const [datasetPreview, setDatasetPreviewState] = useState<DatasetPreviewData | null>(getInitialPreview);
-  const [fullDataset, setFullDatasetState] = useState<FullDatasetData | null>(getInitialFullDataset);
-  const [isUploading, setIsUploading] = useState<boolean>(false);
+  const [datasetPreview, setDatasetPreviewState] =
+    useState<DatasetPreviewData | null>(null);
 
-  const setUploadResult = (result: UploadResult | null) => {
-    setUploadResultState(result);
-    try {
-      if (result) {
-        sessionStorage.setItem(UPLOAD_STORAGE_KEY, JSON.stringify(result));
-      } else {
-        sessionStorage.removeItem(UPLOAD_STORAGE_KEY);
-      }
-    } catch {
-      // Ignore write errors
-    }
-  };
+  const [fullDataset, setFullDatasetState] =
+    useState<FullDatasetData | null>(null);
 
-  const handleUploadSuccess = (data: UploadResult, rawCsvText?: string) => {
-    setUploadResult(data);
+  const [isUploading, setIsUploading] =
+    useState(false);
 
-    if (rawCsvText) {
-      const preview = parseCsvToPreview(rawCsvText);
-      const parsedFull = parseFullCsv(rawCsvText);
-      setDatasetPreviewState(preview);
-      setFullDatasetState(parsedFull);
-      try {
-        sessionStorage.setItem(PREVIEW_STORAGE_KEY, JSON.stringify(preview));
-        sessionStorage.setItem(DATASET_STORAGE_KEY, JSON.stringify(parsedFull));
-      } catch {
-        // Ignore write errors
-      }
-    }
-  };
-
-  const clearDataset = () => {
-    setUploadResult(null);
+  const clearDataset = useCallback(() => {
+    setUploadResultState(null);
     setDatasetPreviewState(null);
     setFullDatasetState(null);
-    try {
-      sessionStorage.removeItem(UPLOAD_STORAGE_KEY);
-      sessionStorage.removeItem(PREVIEW_STORAGE_KEY);
-      sessionStorage.removeItem(DATASET_STORAGE_KEY);
-    } catch {
-      // Ignore
+    setIsUploading(false);
+
+    removeStoredData();
+  }, []);
+
+  // Restore saved data when the authenticated
+  // user changes, not after every upload.
+  useEffect(() => {
+    if (!userId) {
+      setUploadResultState(null);
+      setDatasetPreviewState(null);
+      setFullDatasetState(null);
+      removeStoredData();
+      return;
     }
-  };
+
+    const savedUpload = readStoredData<UploadResult>(
+      STORAGE_KEYS.upload,
+      userId
+    );
+
+    const savedPreview =
+      readStoredData<DatasetPreviewData>(
+        STORAGE_KEYS.preview,
+        userId
+      );
+
+    const savedDataset =
+      readStoredData<FullDatasetData>(
+        STORAGE_KEYS.dataset,
+        userId
+      );
+
+    const validUpload =
+      savedUpload?.success === true &&
+      savedUpload.metrics != null;
+
+    setUploadResultState(
+      validUpload ? savedUpload : null
+    );
+
+    setDatasetPreviewState(
+      validUpload ? savedPreview : null
+    );
+
+    setFullDatasetState(
+      validUpload ? savedDataset : null
+    );
+  }, [userId]);
+
+  const setUploadResult = useCallback(
+    (result: UploadResult | null) => {
+      if (!result) {
+        clearDataset();
+        return;
+      }
+
+      if (!userId) {
+        throw new Error(
+          "Login session is not available."
+        );
+      }
+
+      setUploadResultState(result);
+
+      saveStoredData(
+        STORAGE_KEYS.upload,
+        userId,
+        result
+      );
+    },
+    [userId, clearDataset]
+  );
+
+  const handleUploadSuccess = useCallback(
+    (
+      data: UploadResult,
+      rawCsvText?: string
+    ) => {
+      if (!userId) {
+        throw new Error(
+          "Session expired. Please log in again."
+        );
+      }
+
+      if (
+        data?.success !== true ||
+        !data.metrics ||
+        !Number.isFinite(data.rows_processed)
+      ) {
+        throw new Error(
+          "Invalid CSV analysis result."
+        );
+      }
+
+      // Parse the new dataset before updating state.
+      const dataset =
+        rawCsvText !== undefined
+          ? parseFullCsv(rawCsvText)
+          : null;
+
+      const preview =
+        rawCsvText !== undefined
+          ? parseCsvToPreview(rawCsvText)
+          : null;
+
+      // Update Dashboard immediately.
+      setUploadResultState(data);
+      setFullDatasetState(dataset);
+      setDatasetPreviewState(preview);
+
+      // Save the result for the current user.
+      saveStoredData(
+        STORAGE_KEYS.upload,
+        userId,
+        data
+      );
+
+      if (dataset && preview) {
+        saveStoredData(
+          STORAGE_KEYS.dataset,
+          userId,
+          dataset
+        );
+
+        saveStoredData(
+          STORAGE_KEYS.preview,
+          userId,
+          preview
+        );
+      } else {
+        try {
+          sessionStorage.removeItem(
+            STORAGE_KEYS.dataset
+          );
+
+          sessionStorage.removeItem(
+            STORAGE_KEYS.preview
+          );
+        } catch {
+          // Ignore storage errors.
+        }
+      }
+    },
+    [userId]
+  );
 
   return (
     <DashboardContext.Provider
@@ -188,10 +406,14 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
   );
 }
 
-export function useDashboard() {
+export function useDashboard(): DashboardContextType {
   const context = useContext(DashboardContext);
+
   if (!context) {
-    throw new Error("useDashboard must be used within a DashboardProvider");
+    throw new Error(
+      "useDashboard must be used within DashboardProvider"
+    );
   }
+
   return context;
 }
