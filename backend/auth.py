@@ -72,6 +72,7 @@ def database():
         timeout=10,
     )
     connection.row_factory = sqlite3.Row
+    connection.execute("PRAGMA foreign_keys = ON")
 
     try:
         yield connection
@@ -119,6 +120,60 @@ def initialize_database():
                 attempt_count INTEGER NOT NULL,
                 window_started_at INTEGER NOT NULL
             )
+        """)
+
+        connection.execute("""
+            CREATE TABLE IF NOT EXISTS datasets (
+                id TEXT PRIMARY KEY,
+                user_id TEXT NOT NULL,
+                original_filename TEXT NOT NULL,
+                stored_filename TEXT NOT NULL UNIQUE,
+                storage_path TEXT NOT NULL,
+                uploaded_at INTEGER NOT NULL,
+                row_count INTEGER NOT NULL CHECK (row_count >= 0),
+                column_count INTEGER NOT NULL CHECK (column_count >= 0),
+                columns_json TEXT NOT NULL,
+                date_start TEXT,
+                date_end TEXT,
+                status TEXT NOT NULL DEFAULT 'ready',
+                FOREIGN KEY (user_id)
+                    REFERENCES users(id)
+                    ON DELETE CASCADE
+            )
+        """)
+
+        connection.execute("""
+            CREATE TABLE IF NOT EXISTS analysis_history (
+                id TEXT PRIMARY KEY,
+                user_id TEXT NOT NULL,
+                dataset_id TEXT,
+                analysis_type TEXT NOT NULL,
+                created_at INTEGER NOT NULL,
+                input_summary_json TEXT NOT NULL,
+                result_json TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'success',
+                FOREIGN KEY (user_id)
+                    REFERENCES users(id)
+                    ON DELETE CASCADE,
+                FOREIGN KEY (dataset_id)
+                    REFERENCES datasets(id)
+                    ON DELETE SET NULL
+            )
+        """)
+
+        connection.execute("""
+            CREATE INDEX IF NOT EXISTS idx_datasets_user_uploaded
+            ON datasets(user_id, uploaded_at DESC)
+        """)
+
+        connection.execute("""
+            CREATE INDEX IF NOT EXISTS idx_analysis_user_created
+            ON analysis_history(user_id, created_at DESC)
+        """)
+
+        connection.execute("""
+            CREATE INDEX IF NOT EXISTS idx_analysis_dataset
+            ON analysis_history(dataset_id)
         """)
 
 

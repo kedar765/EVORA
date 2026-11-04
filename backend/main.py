@@ -1,8 +1,13 @@
 
 import io
+import json
+import math
 import os
 import sys
+import time
+import uuid
 
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from urllib.parse import urlsplit
 
@@ -16,6 +21,7 @@ from fastapi import (
     HTTPException,
     Request,
     UploadFile,
+    Query,
 )
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -27,7 +33,11 @@ sys.path.append(str(ROOT_DIR))
 
 from agents.analytics_agent import AnalyticsAgent
 from agents.risk_agent import RiskAgent
-from backend.auth import get_current_user, router as auth_router
+from backend.auth import (
+    database,
+    get_current_user,
+    router as auth_router,
+)
 from backend.features import prepare_features
 from ml.forecast import DailyProfitForecaster
 
@@ -235,8 +245,175 @@ def make_feature_frame(
 
 
 # ---------------------------------------
-# CSV Validation
+# CSV Validation and Private Storage
 # ---------------------------------------
+
+MAX_UPLOAD_SIZE_BYTES = 25 * 1024 * 1024  # 25 MB
+UPLOAD_STORAGE_DIR = ROOT_DIR / "backend" / "storage" / "uploads"
+
+def make_json_safe(value):
+    """Convert common Pandas/NumPy values into JSON-safe values."""
+    if isinstance(value, dict):
+        return {str(key): make_json_safe(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [make_json_safe(item) for item in value]
+    if isinstance(value, pd.Timestamp):
+        return value.isoformat()
+    if hasattr(value, "item") and callable(value.item):
+        try:
+            value = value.item()
+        except (ValueError, TypeError):
+            pass
+    if isinstance(value, float) and not math.isfinite(value):
+        return None
+    if isinstance(value, (str, int, float, bool)) or value is None:
+        return value
+    if hasattr(value, "isoformat") and callable(value.isoformat):
+        return value.isoformat()
+    return str(value)
+
+
+def persist_uploaded_dataset(
+    file_contents: bytes,
+    original_filename: str,
+    dataframe: pd.DataFrame,
+    user_id: str,
+    analysis_result: dict,
+    original_columns: list[str] | None = None,
+) -> str:
+    """Store a private CSV and its successful upload analysis."""
+    dataset_id = str(uuid.uuid4())
+    analysis_id = str(uuid.uuid4())
+    stored_filename = f"{dataset_id}.csv"
+    UPLOAD_STORAGE_DIR.mkdir(parents=True, exist_ok=True)
+    final_path = UPLOAD_STORAGE_DIR / stored_filename
+    temporary_path = UPLOAD_STORAGE_DIR / f".{stored_filename}.tmp"
+
+    safe_original_filename = str(original_filename or "uploaded.csv")
+    safe_original_filename = safe_original_filename.replace("\\", "/").split("/")[-1][:255]
+    if not safe_original_filename:
+        safe_original_filename = "uploaded.csv"
+
+    date_start = None
+    date_end = None
+    if "Date" in dataframe.columns:
+        parsed_dates = pd.to_datetime(dataframe["Date"], errors="coerce").dropna()
+        if not parsed_dates.empty:
+            date_start = parsed_dates.min().date().isoformat()
+            date_end = parsed_dates.max().date().isoformat()
+
+    relative_storage_path = str(final_path.relative_to(ROOT_DIR))
+    uploaded_at = int(time.time())
+    safe_result = dict(analysis_result)
+    safe_result["dataset_id"] = dataset_id
+    saved_columns = [
+        str(column)
+        for column in (original_columns or dataframe.columns)
+    ]
+    input_summary = {
+        "original_filename": safe_original_filename,
+        "rows_processed": int(len(dataframe)),
+        "column_count": len(saved_columns),
+        "columns": saved_columns,
+    }
+
+    try:
+        temporary_path.write_bytes(file_contents)
+        temporary_path.replace(final_path)
+        with database() as connection:
+            connection.execute(
+                """
+                INSERT INTO datasets (
+                    id, user_id, original_filename, stored_filename,
+                    storage_path, uploaded_at, row_count, column_count,
+                    columns_json, date_start, date_end, status
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    dataset_id,
+                    user_id,
+                    safe_original_filename,
+                    stored_filename,
+                    relative_storage_path,
+                    uploaded_at,
+                    int(len(dataframe)),
+                    len(saved_columns),
+                    json.dumps(saved_columns),
+                    date_start,
+                    date_end,
+                    "ready",
+                ),
+            )
+            connection.execute(
+                """
+                INSERT INTO analysis_history (
+                    id, user_id, dataset_id, analysis_type, created_at,
+                    input_summary_json, result_json, status
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    analysis_id,
+                    user_id,
+                    dataset_id,
+                    "upload_analysis",
+                    uploaded_at,
+                    json.dumps(make_json_safe(input_summary), allow_nan=False),
+                    json.dumps(make_json_safe(safe_result), allow_nan=False),
+                    "success",
+                ),
+            )
+    except Exception:
+        temporary_path.unlink(missing_ok=True)
+        final_path.unlink(missing_ok=True)
+        raise
+
+    return dataset_id
+
+
+def save_analysis_history(
+    user_id: str,
+    analysis_type: str,
+    input_summary: dict,
+    result: dict,
+    dataset_id: str | None = None,
+) -> tuple[str, int]:
+    """Persist a successful analysis result for the authenticated user."""
+    analysis_id = str(uuid.uuid4())
+    created_at = int(time.time())
+
+    with database() as connection:
+        if dataset_id is not None:
+            owned_dataset = connection.execute(
+                "SELECT id FROM datasets WHERE id = ? AND user_id = ?",
+                (dataset_id, user_id),
+            ).fetchone()
+            if owned_dataset is None:
+                raise HTTPException(
+                    status_code=404,
+                    detail="Dataset not found.",
+                )
+
+        connection.execute(
+            """
+            INSERT INTO analysis_history (
+                id, user_id, dataset_id, analysis_type, created_at,
+                input_summary_json, result_json, status
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                analysis_id,
+                user_id,
+                dataset_id,
+                analysis_type,
+                created_at,
+                json.dumps(make_json_safe(input_summary), allow_nan=False),
+                json.dumps(make_json_safe(result), allow_nan=False),
+                "success",
+            ),
+        )
+
+    return analysis_id, created_at
+
 
 async def read_business_csv(
     file: UploadFile,
@@ -252,12 +429,19 @@ async def read_business_csv(
         )
 
     try:
-        contents = await file.read()
+        contents = await file.read(MAX_UPLOAD_SIZE_BYTES + 1)
+        if len(contents) > MAX_UPLOAD_SIZE_BYTES:
+            raise HTTPException(
+                status_code=413,
+                detail="CSV file exceeds the 25 MB upload limit.",
+            )
 
         dataframe = pd.read_csv(
             io.BytesIO(contents)
         )
 
+    except HTTPException:
+        raise
     except (
         pd.errors.EmptyDataError,
         pd.errors.ParserError,
@@ -339,17 +523,16 @@ def health():
 # CSV Upload and Business Analysis
 # ---------------------------------------
 
-@app.post(
-    "/upload",
-    dependencies=[Depends(get_current_user)],
-)
+@app.post("/upload")
 async def upload_csv(
     file: UploadFile = File(...),
+    user: dict = Depends(get_current_user),
 ):
     df = await read_business_csv(
         file,
         ["Quantity", "Revenue", "Expense"],
     )
+    original_columns = [str(column) for column in df.columns]
 
     df["Profit"] = (
         df["Revenue"] - df["Expense"]
@@ -440,7 +623,7 @@ async def upload_csv(
     else:
         status = "High Risk — Anomalies Detected"
 
-    return {
+    response_data = {
         "success": True,
         "message": "CSV processed and analyzed successfully.",
         "filename": file.filename,
@@ -474,6 +657,348 @@ async def upload_csv(
         "business_status": status,
     }
 
+    try:
+        await file.seek(0)
+        file_contents = await file.read()
+        dataset_id = persist_uploaded_dataset(
+            file_contents=file_contents,
+            original_filename=file.filename,
+            dataframe=df,
+            user_id=user["id"],
+            analysis_result=response_data,
+            original_columns=original_columns,
+        )
+    except HTTPException:
+        raise
+    except Exception as exc:
+        print(f"Dataset persistence error: {exc}")
+        raise HTTPException(
+            status_code=500,
+            detail="Analysis completed, but the dataset could not be saved.",
+        ) from exc
+
+    response_data["dataset_id"] = dataset_id
+    return response_data
+
+
+# ---------------------------------------
+# Dataset and Analysis History Read APIs
+# ---------------------------------------
+
+def _parse_stored_json(value, default):
+    if value is None:
+        return default
+    try:
+        return json.loads(value)
+    except (TypeError, json.JSONDecodeError) as exc:
+        raise HTTPException(
+            status_code=500,
+            detail="Stored dataset or analysis metadata is invalid.",
+        ) from exc
+
+
+def _get_owned_dataset(connection, dataset_id: str, user_id: str):
+    row = connection.execute(
+        """
+        SELECT *
+        FROM datasets
+        WHERE id = ? AND user_id = ?
+        """,
+        (dataset_id, user_id),
+    ).fetchone()
+
+    if row is None:
+        # Use 404 for both unknown and other users' IDs to avoid ID disclosure.
+        raise HTTPException(
+            status_code=404,
+            detail="Dataset not found.",
+        )
+
+    return row
+
+
+def _dataset_response(row):
+    return {
+        "dataset_id": row["id"],
+        "filename": row["original_filename"],
+        "uploaded_at": row["uploaded_at"],
+        "rows": row["row_count"],
+        "columns_count": row["column_count"],
+        "columns": _parse_stored_json(row["columns_json"], []),
+        "date_start": row["date_start"],
+        "date_end": row["date_end"],
+        "status": row["status"],
+    }
+
+
+def _history_list_response(row):
+    return {
+        "analysis_id": row["id"],
+        "dataset_id": row["dataset_id"],
+        "analysis_type": row["analysis_type"],
+        "created_at": row["created_at"],
+        "input_summary": _parse_stored_json(
+            row["input_summary_json"], {}
+        ),
+        "status": row["status"],
+    }
+
+
+def _date_timestamp(value: str, end_of_day: bool = False) -> float:
+    try:
+        parsed = datetime.strptime(value, "%Y-%m-%d").replace(
+            tzinfo=timezone.utc
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail="Dates must use YYYY-MM-DD format.",
+        ) from exc
+
+    if end_of_day:
+        parsed += timedelta(days=1)
+
+    return parsed.timestamp()
+
+
+@app.get("/datasets")
+def list_datasets(
+    user: dict = Depends(get_current_user),
+    limit: int = Query(20, ge=1, le=100),
+    offset: int = Query(0, ge=0),
+):
+    with database() as connection:
+        total = connection.execute(
+            "SELECT COUNT(*) FROM datasets WHERE user_id = ?",
+            (user["id"],),
+        ).fetchone()[0]
+
+        rows = connection.execute(
+            """
+            SELECT *
+            FROM datasets
+            WHERE user_id = ?
+            ORDER BY uploaded_at DESC, id DESC
+            LIMIT ? OFFSET ?
+            """,
+            (user["id"], limit, offset),
+        ).fetchall()
+
+    return {
+        "success": True,
+        "total": total,
+        "limit": limit,
+        "offset": offset,
+        "datasets": [_dataset_response(row) for row in rows],
+    }
+
+
+@app.get("/datasets/{dataset_id}")
+def get_dataset(
+    dataset_id: str,
+    user: dict = Depends(get_current_user),
+):
+    with database() as connection:
+        row = _get_owned_dataset(
+            connection,
+            dataset_id,
+            user["id"],
+        )
+
+    return {
+        "success": True,
+        "dataset": _dataset_response(row),
+    }
+
+
+@app.get("/datasets/{dataset_id}/preview")
+def preview_dataset(
+    dataset_id: str,
+    user: dict = Depends(get_current_user),
+    rows: int = Query(10, ge=1, le=50),
+):
+    with database() as connection:
+        dataset = _get_owned_dataset(
+            connection,
+            dataset_id,
+            user["id"],
+        )
+
+    stored_path = Path(dataset["storage_path"])
+    if stored_path.is_absolute():
+        raise HTTPException(
+            status_code=500,
+            detail="Stored dataset path is invalid.",
+        )
+
+    upload_root = UPLOAD_STORAGE_DIR.resolve()
+    csv_path = (ROOT_DIR / stored_path).resolve()
+
+    try:
+        csv_path.relative_to(upload_root)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=500,
+            detail="Stored dataset path is outside private storage.",
+        ) from exc
+
+    if not csv_path.is_file():
+        raise HTTPException(
+            status_code=404,
+            detail="Stored dataset file is unavailable.",
+        )
+
+    try:
+        preview_df = pd.read_csv(csv_path, nrows=rows)
+        records = make_json_safe(preview_df.to_dict(orient="records"))
+    except (OSError, pd.errors.ParserError, UnicodeDecodeError) as exc:
+        raise HTTPException(
+            status_code=500,
+            detail="Could not read the stored dataset.",
+        ) from exc
+
+    return {
+        "success": True,
+        "dataset_id": dataset_id,
+        "filename": dataset["original_filename"],
+        "columns": list(preview_df.columns),
+        "preview_rows": len(records),
+        "data": records,
+    }
+
+
+@app.get("/datasets/{dataset_id}/history")
+def list_dataset_history(
+    dataset_id: str,
+    user: dict = Depends(get_current_user),
+    limit: int = Query(20, ge=1, le=100),
+    offset: int = Query(0, ge=0),
+):
+    with database() as connection:
+        _get_owned_dataset(connection, dataset_id, user["id"])
+
+        total = connection.execute(
+            """
+            SELECT COUNT(*)
+            FROM analysis_history
+            WHERE user_id = ? AND dataset_id = ?
+            """,
+            (user["id"], dataset_id),
+        ).fetchone()[0]
+
+        rows = connection.execute(
+            """
+            SELECT *
+            FROM analysis_history
+            WHERE user_id = ? AND dataset_id = ?
+            ORDER BY created_at DESC, id DESC
+            LIMIT ? OFFSET ?
+            """,
+            (user["id"], dataset_id, limit, offset),
+        ).fetchall()
+
+    return {
+        "success": True,
+        "total": total,
+        "limit": limit,
+        "offset": offset,
+        "history": [_history_list_response(row) for row in rows],
+    }
+
+
+@app.get("/analysis-history")
+def list_analysis_history(
+    user: dict = Depends(get_current_user),
+    analysis_type: str | None = Query(None, max_length=80),
+    dataset_id: str | None = Query(None, max_length=80),
+    start_date: str | None = Query(None),
+    end_date: str | None = Query(None),
+    limit: int = Query(20, ge=1, le=100),
+    offset: int = Query(0, ge=0),
+):
+    conditions = ["user_id = ?"]
+    parameters = [user["id"]]
+
+    if analysis_type:
+        conditions.append("analysis_type = ?")
+        parameters.append(analysis_type)
+
+    if dataset_id:
+        conditions.append("dataset_id = ?")
+        parameters.append(dataset_id)
+
+    if start_date:
+        conditions.append("created_at >= ?")
+        parameters.append(_date_timestamp(start_date))
+
+    if end_date:
+        conditions.append("created_at < ?")
+        parameters.append(_date_timestamp(end_date, end_of_day=True))
+
+    if start_date and end_date:
+        if _date_timestamp(start_date) >= _date_timestamp(end_date, end_of_day=True):
+            raise HTTPException(
+                status_code=400,
+                detail="start_date must be on or before end_date.",
+            )
+
+    where_clause = " AND ".join(conditions)
+
+    with database() as connection:
+        total = connection.execute(
+            f"SELECT COUNT(*) FROM analysis_history WHERE {where_clause}",
+            parameters,
+        ).fetchone()[0]
+
+        rows = connection.execute(
+            f"""
+            SELECT *
+            FROM analysis_history
+            WHERE {where_clause}
+            ORDER BY created_at DESC, id DESC
+            LIMIT ? OFFSET ?
+            """,
+            [*parameters, limit, offset],
+        ).fetchall()
+
+    return {
+        "success": True,
+        "total": total,
+        "limit": limit,
+        "offset": offset,
+        "history": [_history_list_response(row) for row in rows],
+    }
+
+
+@app.get("/analysis-history/{analysis_id}")
+def get_analysis_history_item(
+    analysis_id: str,
+    user: dict = Depends(get_current_user),
+):
+    with database() as connection:
+        row = connection.execute(
+            """
+            SELECT *
+            FROM analysis_history
+            WHERE id = ? AND user_id = ?
+            """,
+            (analysis_id, user["id"]),
+        ).fetchone()
+
+    if row is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Analysis history item not found.",
+        )
+
+    return {
+        "success": True,
+        "analysis": {
+            **_history_list_response(row),
+            "result": _parse_stored_json(row["result_json"], {}),
+        },
+    }
+
 
 # ---------------------------------------
 # ML Profit Prediction
@@ -485,12 +1010,10 @@ class ProfitPredictionRequest(BaseModel):
     Expense: float
 
 
-@app.post(
-    "/ml/predict-profit",
-    dependencies=[Depends(get_current_user)],
-)
+@app.post("/ml/predict-profit")
 def predict_profit(
     data: ProfitPredictionRequest,
+    user: dict = Depends(get_current_user),
 ):
     require_profit_model()
 
@@ -506,10 +1029,25 @@ def predict_profit(
         )[0]
     )
 
-    return {
+    response = {
         "success": True,
         "predicted_profit": prediction,
     }
+
+    analysis_id, created_at = save_analysis_history(
+        user_id=user["id"],
+        analysis_type="profit_prediction",
+        input_summary={
+            "quantity": data.Quantity,
+            "revenue": data.Revenue,
+            "expense": data.Expense,
+        },
+        result=response,
+    )
+
+    response["analysis_id"] = analysis_id
+    response["created_at"] = created_at
+    return response
 
 
 # ---------------------------------------
@@ -520,12 +1058,10 @@ class RiskAnalysisRequest(ProfitPredictionRequest):
     pass
 
 
-@app.post(
-    "/analyze-risk",
-    dependencies=[Depends(get_current_user)],
-)
+@app.post("/analyze-risk")
 def analyze_risk(
     data: RiskAnalysisRequest,
+    user: dict = Depends(get_current_user),
 ):
     require_profit_model()
 
@@ -570,7 +1106,7 @@ def analyze_risk(
         risk_level=level,
     )
 
-    return {
+    response = {
         "success": True,
         "predicted_profit": predicted_profit,
         "anomaly_detected": anomaly_detected,
@@ -578,6 +1114,21 @@ def analyze_risk(
         "risk_level": level,
         "risk_analysis": risk_analysis,
     }
+
+    analysis_id, created_at = save_analysis_history(
+        user_id=user["id"],
+        analysis_type="risk_analysis",
+        input_summary={
+            "quantity": data.Quantity,
+            "revenue": data.Revenue,
+            "expense": data.Expense,
+        },
+        result=response,
+    )
+
+    response["analysis_id"] = analysis_id
+    response["created_at"] = created_at
+    return response
 
 
 # ---------------------------------------
@@ -594,12 +1145,10 @@ class WhatIfRequest(BaseModel):
     new_expense: float
 
 
-@app.post(
-    "/what-if",
-    dependencies=[Depends(get_current_user)],
-)
+@app.post("/what-if")
 def what_if_analysis(
     data: WhatIfRequest,
+    user: dict = Depends(get_current_user),
 ):
     require_profit_model()
 
@@ -631,77 +1180,126 @@ def what_if_analysis(
 
     if difference > 0:
         result = "Profit may increase"
-
     elif difference < 0:
         result = "Profit may decrease"
-
     else:
         result = "No significant change"
 
-    return {
+    response = {
         "success": True,
-        "current_predicted_profit": round(
-            current_profit, 2
-        ),
-        "new_predicted_profit": round(
-            new_profit, 2
-        ),
-        "profit_difference": round(
-            difference, 2
-        ),
+        "current_predicted_profit": round(current_profit, 2),
+        "new_predicted_profit": round(new_profit, 2),
+        "profit_difference": round(difference, 2),
         "result": result,
     }
+
+    analysis_id, created_at = save_analysis_history(
+        user_id=user["id"],
+        analysis_type="what_if_analysis",
+        input_summary={
+            "current_quantity": data.current_quantity,
+            "current_revenue": data.current_revenue,
+            "current_expense": data.current_expense,
+            "new_quantity": data.new_quantity,
+            "new_revenue": data.new_revenue,
+            "new_expense": data.new_expense,
+        },
+        result=response,
+    )
+
+    response["analysis_id"] = analysis_id
+    response["created_at"] = created_at
+    return response
 
 
 # ---------------------------------------
 # Business Analytics
 # ---------------------------------------
 
-@app.post(
-    "/analytics",
-    dependencies=[Depends(get_current_user)],
-)
+@app.post("/analytics")
 async def analytics(
     file: UploadFile = File(...),
+    user: dict = Depends(get_current_user),
 ):
     df = await read_business_csv(
         file,
         ["Revenue", "Expense"],
     )
 
-    return {
+    analysis_result = analytics_agent.analyze(df)
+    response = {
         "success": True,
-        "analysis": analytics_agent.analyze(df),
+        "analysis": make_json_safe(analysis_result),
     }
+
+    original_filename = (
+        str(file.filename or "uploaded.csv")
+        .replace("\\", "/")
+        .split("/")[-1][:255]
+    )
+    input_summary = {
+        "original_filename": original_filename,
+        "rows_processed": int(len(df)),
+        "column_count": int(len(df.columns)),
+        "columns": [str(column) for column in df.columns],
+    }
+
+    analysis_id, created_at = save_analysis_history(
+        user_id=user["id"],
+        analysis_type="business_analytics",
+        input_summary=input_summary,
+        result=response,
+    )
+
+    response["analysis_id"] = analysis_id
+    response["created_at"] = created_at
+    return response
 
 
 # ---------------------------------------
 # Future Profit Forecasting
 # ---------------------------------------
 
-@app.get(
-    "/forecast/next-day",
-    dependencies=[Depends(get_current_user)],
-)
-def get_next_day_forecast():
+@app.get("/forecast/next-day")
+def get_next_day_forecast(
+    user: dict = Depends(get_current_user),
+):
     require_forecast_model()
     try:
-        return daily_profit_forecaster.predict_next_day()
+        forecast_result = daily_profit_forecaster.predict_next_day()
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     except Exception as exc:
         raise HTTPException(
             status_code=500,
             detail=f"Forecasting error: {str(exc)}",
-        )
+        ) from exc
+
+    response = make_json_safe(forecast_result)
+    analysis_id, created_at = save_analysis_history(
+        user_id=user["id"],
+        analysis_type="future_profit_forecast",
+        input_summary={"source": "stored_forecast_history"},
+        result=response if isinstance(response, dict) else {"prediction": response},
+    )
+
+    if isinstance(response, dict):
+        response["analysis_id"] = analysis_id
+        response["created_at"] = created_at
+        return response
+
+    return {
+        "success": True,
+        "prediction": response,
+        "analysis_id": analysis_id,
+        "created_at": created_at,
+    }
 
 
-@app.post(
-    "/forecast/next-day",
-    dependencies=[Depends(get_current_user)],
-)
+@app.post("/forecast/next-day")
 async def post_next_day_forecast(
     file: UploadFile = File(...),
+    user: dict = Depends(get_current_user),
 ):
     require_forecast_model()
     df = await read_business_csv(
@@ -709,12 +1307,37 @@ async def post_next_day_forecast(
         ["Revenue", "Expense"],
     )
     try:
-        return daily_profit_forecaster.predict_next_day(historical_df=df)
+        forecast_result = daily_profit_forecaster.predict_next_day(historical_df=df)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     except Exception as exc:
         raise HTTPException(
             status_code=500,
             detail=f"Forecasting error: {str(exc)}",
-        )
+        ) from exc
+
+    response = make_json_safe(forecast_result)
+    input_summary = {
+        "original_filename": (file.filename or "uploaded.csv").replace("\\", "/").split("/")[-1][:255],
+        "rows_processed": int(len(df)),
+        "columns": [str(column) for column in df.columns],
+    }
+    analysis_id, created_at = save_analysis_history(
+        user_id=user["id"],
+        analysis_type="future_profit_forecast",
+        input_summary=input_summary,
+        result=response if isinstance(response, dict) else {"prediction": response},
+    )
+
+    if isinstance(response, dict):
+        response["analysis_id"] = analysis_id
+        response["created_at"] = created_at
+        return response
+
+    return {
+        "success": True,
+        "prediction": response,
+        "analysis_id": analysis_id,
+        "created_at": created_at,
+    }
 

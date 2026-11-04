@@ -74,3 +74,8 @@ ehthumbs.db
 *.pem
 *.key
 credentials.json
+
+*.bak
+backend/storage/uploads/
+storage/uploads/
+uploads/
