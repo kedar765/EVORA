@@ -1,4 +1,3 @@
-
 import io
 import json
 import math
@@ -10,6 +9,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from urllib.parse import urlsplit
+from typing import Any, Dict, Optional
 
 import joblib
 import pandas as pd
@@ -29,10 +29,12 @@ from pydantic import BaseModel
 
 
 ROOT_DIR = Path(__file__).resolve().parent.parent
-sys.path.append(str(ROOT_DIR))
+sys.path.insert(0, str(ROOT_DIR))
 
 from agents.analytics_agent import AnalyticsAgent
 from agents.risk_agent import RiskAgent
+from agents.decision_agent import DecisionOptimizationAgent
+
 from backend.auth import (
     database,
     get_current_user,
@@ -143,6 +145,7 @@ async def csrf_origin_guard(
 
 analytics_agent = AnalyticsAgent()
 risk_agent = RiskAgent()
+decision_agent = DecisionOptimizationAgent()
 
 MODEL_FEATURES = [
     "Quantity",
@@ -1209,6 +1212,63 @@ def what_if_analysis(
 
     response["analysis_id"] = analysis_id
     response["created_at"] = created_at
+    return response
+
+# ---------------------------------------
+# Decision Optimization
+# ---------------------------------------
+
+class DecisionRecommendationRequest(BaseModel):
+    analytics: Optional[Dict[str, Any]] = None
+    risk: Optional[Dict[str, Any]] = None
+    scenario: Optional[Dict[str, Any]] = None
+
+
+@app.post("/decision/recommend")
+def get_decision_recommendations(
+    data: DecisionRecommendationRequest,
+    user: dict = Depends(get_current_user),
+):
+    # Generate decision recommendations
+    decision_result = decision_agent.recommend(
+        analytics=data.analytics,
+        risk=data.risk,
+        scenario=data.scenario,
+    )
+
+    response = {
+        "success": True,
+        "decision": make_json_safe(decision_result),
+    }
+
+    # Extract risk level for history
+    risk_level = None
+
+    if data.risk:
+        risk_level = data.risk.get("risk_level")
+
+        if risk_level is None:
+            risk_analysis = data.risk.get("risk_analysis")
+
+            if isinstance(risk_analysis, dict):
+                risk_level = risk_analysis.get("risk_level")
+
+    # Save decision history
+    analysis_id, created_at = save_analysis_history(
+        user_id=user["id"],
+        analysis_type="decision_recommendation",
+        input_summary={
+            "risk_level": risk_level,
+            "has_analytics": data.analytics is not None,
+            "has_risk": data.risk is not None,
+            "has_scenario": data.scenario is not None,
+        },
+        result=response,
+    )
+
+    response["analysis_id"] = analysis_id
+    response["created_at"] = created_at
+
     return response
 
 
