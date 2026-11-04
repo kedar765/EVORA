@@ -35,6 +35,52 @@ export interface ForecastNextDayResponse {
   status: string;
 }
 
+export interface DecisionRecommendationRequest {
+  analytics?: {
+    total_revenue?: number;
+    total_expense?: number;
+    total_profit?: number;
+    profit_margin?: number;
+  };
+  risk?: {
+    risk_level?: string;
+    risk_score?: number;
+    anomaly_detected?: boolean;
+  };
+  scenario?: {
+    current_predicted_profit?: number;
+    new_predicted_profit?: number;
+    profit_difference?: number;
+    result?: string;
+  };
+}
+
+export interface DecisionAction {
+  action: string;
+  reason: string;
+  expected_benefit: string;
+  risk: string;
+}
+
+export interface DecisionRecommendationResponse {
+  success: boolean;
+  decision: {
+    question_addressed: string;
+    priority: "HIGH" | "MEDIUM" | "LOW";
+    risk_context: {
+      risk_level: string;
+      risk_score: number;
+      anomaly_detected: boolean;
+    };
+    evidence: string[];
+    recommendations: string[];
+    action_plan: DecisionAction[];
+    decision_disclaimer: string;
+  };
+  analysis_id: string;
+  created_at: number;
+}
+
 const API_BASE_URL =
   process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
@@ -135,6 +181,17 @@ export const api = {
     );
 
     return validateAuthResponse(response);
+  },
+    getDecisionRecommendations: async (
+    data: DecisionRecommendationRequest
+  ): Promise<DecisionRecommendationResponse> => {
+    return request<DecisionRecommendationResponse>(
+      "/decision/recommend",
+      {
+        method: "POST",
+        body: JSON.stringify(data),
+      }
+    );
   },
 
   getForecastNextDay: async (): Promise<ForecastNextDayResponse> => {

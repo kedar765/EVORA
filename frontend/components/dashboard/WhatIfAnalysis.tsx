@@ -20,6 +20,7 @@ import {
 
 interface WhatIfAnalysisProps {
   currentMetrics: BusinessMetrics | null;
+  onResult?: (result: WhatIfResult | null) => void;
 }
 
 const API_BASE_URL =
@@ -28,6 +29,7 @@ const API_BASE_URL =
 
 export default function WhatIfAnalysis({
   currentMetrics,
+  onResult,
 }: WhatIfAnalysisProps) {
   const [currentQuantity, setCurrentQuantity] = useState("");
   const [currentRevenue, setCurrentRevenue] = useState("");
@@ -67,6 +69,7 @@ export default function WhatIfAnalysis({
 
     setResult(null);
     setError("");
+    onResult?.(null);
   };
 
   const handleRunSimulation = async () => {
@@ -74,6 +77,7 @@ export default function WhatIfAnalysis({
 
     setError("");
     setResult(null);
+    onResult?.(null);
 
     const inputs = [
       currentQuantity,
@@ -166,8 +170,8 @@ export default function WhatIfAnalysis({
           typeof detail === "string"
             ? detail
             : typeof detail?.message === "string"
-            ? detail.message
-            : "Scenario simulation failed."
+              ? detail.message
+              : "Scenario simulation failed."
         );
       }
 
@@ -186,7 +190,10 @@ export default function WhatIfAnalysis({
         );
       }
 
-      setResult(data as WhatIfResult);
+      const simulationResult = data as WhatIfResult;
+
+      setResult(simulationResult);
+      onResult?.(simulationResult);
     } catch (err: unknown) {
       setError(
         err instanceof Error
@@ -456,13 +463,12 @@ export default function WhatIfAnalysis({
             </div>
 
             <div
-              className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold border ${
-                isIncrease
+              className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold border ${isIncrease
                   ? "bg-emerald-50 text-emerald-800 border-emerald-200/80"
                   : isDecrease
-                  ? "bg-rose-50 text-rose-800 border-rose-200/80"
-                  : "bg-slate-100 text-slate-700 border-slate-200"
-              }`}
+                    ? "bg-rose-50 text-rose-800 border-rose-200/80"
+                    : "bg-slate-100 text-slate-700 border-slate-200"
+                }`}
             >
               {isIncrease ? (
                 <TrendingUp className="w-3.5 h-3.5" />
@@ -513,13 +519,12 @@ export default function WhatIfAnalysis({
               </span>
 
               <span
-                className={`text-xl font-black mt-1 block tracking-tight ${
-                  isIncrease
+                className={`text-xl font-black mt-1 block tracking-tight ${isIncrease
                     ? "text-emerald-700"
                     : isDecrease
-                    ? "text-rose-700"
-                    : "text-slate-900"
-                }`}
+                      ? "text-rose-700"
+                      : "text-slate-900"
+                  }`}
               >
                 {result.profit_difference >= 0
                   ? "+"
