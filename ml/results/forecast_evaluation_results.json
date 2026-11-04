@@ -1,0 +1,155 @@
+{
+  "metadata": {
+    "model_name": "ExtraTreesRegressor",
+    "model_version": "2.0.0",
+    "created_at": "2026-11-04T10:54:06.317965",
+    "selected_model_type": "ExtraTreesRegressor",
+    "dataset_name": "sample_business_data.csv",
+    "total_historical_days": 1005,
+    "start_reference_date": "2024-01-01",
+    "date_ranges": {
+      "train": [
+        "2024-01-31",
+        "2026-01-02"
+      ],
+      "val": [
+        "2026-01-03",
+        "2026-06-02"
+      ],
+      "test": [
+        "2026-06-03",
+        "2026-10-31"
+      ]
+    },
+    "features": [
+      "day_index",
+      "day_of_week",
+      "month",
+      "day_of_year",
+      "week_of_year",
+      "is_weekend",
+      "profit_lag_1",
+      "profit_lag_7",
+      "profit_lag_14",
+      "profit_lag_30",
+      "revenue_lag_1",
+      "revenue_lag_7",
+      "revenue_lag_14",
+      "expense_lag_1",
+      "expense_lag_7",
+      "expense_lag_14",
+      "profit_mean_7",
+      "profit_mean_14",
+      "profit_mean_30",
+      "profit_std_7",
+      "profit_std_14"
+    ],
+    "val_metrics": {
+      "Model": "ExtraTreesRegressor",
+      "Type": "Machine Learning Regressor",
+      "mae": 375.21,
+      "rmse": 538.4,
+      "r2": 0.0648,
+      "wape_pct": 52.39
+    },
+    "test_metrics": {
+      "mae": 390.55,
+      "rmse": 515.26,
+      "r2": -0.0786,
+      "wape_pct": 47.06
+    },
+    "feature_importances": {
+      "is_weekend": 0.12728,
+      "day_index": 0.08318,
+      "day_of_week": 0.07579,
+      "profit_mean_30": 0.07133,
+      "profit_std_14": 0.06928,
+      "profit_mean_7": 0.05349,
+      "week_of_year": 0.05225,
+      "profit_std_7": 0.05035,
+      "day_of_year": 0.04245,
+      "month": 0.03831,
+      "expense_lag_14": 0.03495,
+      "profit_mean_14": 0.03399,
+      "revenue_lag_1": 0.03373,
+      "expense_lag_1": 0.03365,
+      "profit_lag_7": 0.03277,
+      "profit_lag_1": 0.0315,
+      "revenue_lag_14": 0.02996,
+      "profit_lag_14": 0.02849,
+      "profit_lag_30": 0.0284,
+      "expense_lag_7": 0.02795,
+      "revenue_lag_7": 0.02091
+    },
+    "training_configuration": {
+      "n_estimators": 200,
+      "max_depth": 7,
+      "min_samples_leaf": 4,
+      "random_state": 42
+    }
+  },
+  "comparison_results": [
+    {
+      "Model": "Naive Previous-Day Baseline",
+      "Type": "Heuristic Baseline",
+      "mae": 560.7,
+      "rmse": 772.28,
+      "r2": -0.9241,
+      "wape_pct": 78.29
+    },
+    {
+      "Model": "Previous-Week Baseline",
+      "Type": "Heuristic Baseline",
+      "mae": 541.5,
+      "rmse": 752.45,
+      "r2": -0.8266,
+      "wape_pct": 75.61
+    },
+    {
+      "Model": "7-Day Moving Average Baseline",
+      "Type": "Statistical Baseline",
+      "mae": 423.57,
+      "rmse": 583.63,
+      "r2": -0.0989,
+      "wape_pct": 59.14
+    },
+    {
+      "Model": "Ridge Regression",
+      "Type": "Machine Learning Regressor",
+      "mae": 389.18,
+      "rmse": 548.98,
+      "r2": 0.0277,
+      "wape_pct": 54.34
+    },
+    {
+      "Model": "RandomForestRegressor",
+      "Type": "Machine Learning Regressor",
+      "mae": 404.84,
+      "rmse": 549.25,
+      "r2": 0.0268,
+      "wape_pct": 56.53
+    },
+    {
+      "Model": "ExtraTreesRegressor",
+      "Type": "Machine Learning Regressor",
+      "mae": 375.21,
+      "rmse": 538.4,
+      "r2": 0.0648,
+      "wape_pct": 52.39
+    },
+    {
+      "Model": "HistGradientBoostingRegressor",
+      "Type": "Machine Learning Regressor",
+      "mae": 388.05,
+      "rmse": 552.65,
+      "r2": 0.0147,
+      "wape_pct": 54.18
+    }
+  ],
+  "test_evaluation": {
+    "mae": 390.55,
+    "rmse": 515.26,
+    "r2": -0.0786,
+    "wape_pct": 47.06
+  }
+}

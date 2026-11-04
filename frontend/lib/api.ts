@@ -21,6 +21,20 @@ export interface AuthResponse {
   };
 }
 
+export interface ForecastNextDayResponse {
+  forecast_date: string;
+  predicted_profit: number;
+  currency: string;
+  model_name: string;
+  model_version: string;
+  model_metrics: {
+    mae: number;
+    rmse: number;
+    r2: number;
+  };
+  status: string;
+}
+
 const API_BASE_URL =
   process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
@@ -121,5 +135,11 @@ export const api = {
     );
 
     return validateAuthResponse(response);
+  },
+
+  getForecastNextDay: async (): Promise<ForecastNextDayResponse> => {
+    return request<ForecastNextDayResponse>("/forecast/next-day", {
+      method: "GET",
+    });
   },
 };

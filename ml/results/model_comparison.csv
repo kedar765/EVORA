@@ -1,0 +1,8 @@
+Model,Type,mae,rmse,r2,wape_pct
+Naive Previous-Day Baseline,Heuristic Baseline,560.7,772.28,-0.9241,78.29
+Previous-Week Baseline,Heuristic Baseline,541.5,752.45,-0.8266,75.61
+7-Day Moving Average Baseline,Statistical Baseline,423.57,583.63,-0.0989,59.14
+Ridge Regression,Machine Learning Regressor,389.18,548.98,0.0277,54.34
+RandomForestRegressor,Machine Learning Regressor,404.84,549.25,0.0268,56.53
+ExtraTreesRegressor,Machine Learning Regressor,375.21,538.4,0.0648,52.39
+HistGradientBoostingRegressor,Machine Learning Regressor,388.05,552.65,0.0147,54.18

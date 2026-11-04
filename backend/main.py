@@ -29,6 +29,7 @@ from agents.analytics_agent import AnalyticsAgent
 from agents.risk_agent import RiskAgent
 from backend.auth import get_current_user, router as auth_router
 from backend.features import prepare_features
+from ml.forecast import DailyProfitForecaster
 
 
 app = FastAPI(
@@ -158,6 +159,7 @@ def load_model(filename: str):
 
 model = load_model("profit_model.pkl")
 anomaly_model = load_model("anomaly_model.pkl")
+daily_profit_forecaster = DailyProfitForecaster()
 
 
 def require_profit_model():
@@ -165,6 +167,14 @@ def require_profit_model():
         raise HTTPException(
             status_code=503,
             detail="Profit ML model unavailable.",
+        )
+
+
+def require_forecast_model():
+    if not daily_profit_forecaster.is_loaded or daily_profit_forecaster.model is None:
+        raise HTTPException(
+            status_code=503,
+            detail="Daily profit forecast model unavailable.",
         )
 
 
@@ -663,3 +673,48 @@ async def analytics(
         "success": True,
         "analysis": analytics_agent.analyze(df),
     }
+
+
+# ---------------------------------------
+# Future Profit Forecasting
+# ---------------------------------------
+
+@app.get(
+    "/forecast/next-day",
+    dependencies=[Depends(get_current_user)],
+)
+def get_next_day_forecast():
+    require_forecast_model()
+    try:
+        return daily_profit_forecaster.predict_next_day()
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except Exception as exc:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Forecasting error: {str(exc)}",
+        )
+
+
+@app.post(
+    "/forecast/next-day",
+    dependencies=[Depends(get_current_user)],
+)
+async def post_next_day_forecast(
+    file: UploadFile = File(...),
+):
+    require_forecast_model()
+    df = await read_business_csv(
+        file,
+        ["Revenue", "Expense"],
+    )
+    try:
+        return daily_profit_forecaster.predict_next_day(historical_df=df)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except Exception as exc:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Forecasting error: {str(exc)}",
+        )
+
