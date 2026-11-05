@@ -1,6 +1,5 @@
 "use client";
-
-import React, { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import {
   ArrowRight,
@@ -26,22 +25,57 @@ export default function PredictionsPage() {
   const [forecastLoading, setForecastLoading] = useState(true);
   const [forecastError, setForecastError] = useState<string | null>(null);
 
-  const fetchForecast = async () => {
-    setForecastLoading(true);
-    setForecastError(null);
+  const fetchForecast = useCallback(async () => {
     try {
       const data = await api.getForecastNextDay();
       setForecast(data);
-    } catch (err: any) {
-      setForecastError(err?.message || "Failed to load next-day profit forecast.");
+      setForecastError(null);
+    } catch (err: unknown) {
+      setForecastError(
+        err instanceof Error
+          ? err.message
+          : "Failed to load next-day profit forecast."
+      );
     } finally {
       setForecastLoading(false);
     }
+  }, []);
+
+  const handleRefreshForecast = () => {
+    setForecastLoading(true);
+    setForecastError(null);
+    void fetchForecast();
   };
 
   useEffect(() => {
-    fetchForecast();
-  }, []);
+  let isActive = true;
+
+  api.getForecastNextDay()
+    .then((data) => {
+      if (!isActive) return;
+
+      setForecast(data);
+      setForecastError(null);
+    })
+    .catch((err: unknown) => {
+      if (!isActive) return;
+
+      setForecastError(
+        err instanceof Error
+          ? err.message
+          : "Failed to load next-day profit forecast."
+      );
+    })
+    .finally(() => {
+      if (isActive) {
+        setForecastLoading(false);
+      }
+    });
+
+  return () => {
+    isActive = false;
+  };
+}, []);
 
   return (
     <div className="space-y-6 max-w-5xl">
@@ -104,7 +138,7 @@ export default function PredictionsPage() {
                 </span>
               </div>
               <p className="text-xs text-slate-500 mt-0.5">
-                Leakage-safe chronological time series regression predicting the next business day's net profit.
+                Leakage-safe chronological time series regression predicting the next business day&apos;s net profit.
               </p>
             </div>
           </div>
@@ -114,7 +148,7 @@ export default function PredictionsPage() {
               {forecast?.model_name || "ExtraTreesRegressor"} v{forecast?.model_version || "2.0.0"}
             </span>
             <button
-              onClick={fetchForecast}
+              onClick={handleRefreshForecast}
               disabled={forecastLoading}
               className="p-1.5 rounded-lg border border-slate-200 text-slate-500 hover:text-slate-800 hover:bg-slate-50 transition-colors disabled:opacity-50 cursor-pointer"
               title="Refresh Forecast"
@@ -133,7 +167,7 @@ export default function PredictionsPage() {
           <div className="p-4 rounded-xl bg-amber-50 border border-amber-200 text-xs text-amber-800 flex items-center justify-between">
             <span>{forecastError}</span>
             <button
-              onClick={fetchForecast}
+              onClick={handleRefreshForecast}
               className="px-2.5 py-1 rounded bg-amber-200 text-amber-900 font-semibold hover:bg-amber-300 transition-colors"
             >
               Retry

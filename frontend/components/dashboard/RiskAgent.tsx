@@ -1,7 +1,6 @@
-
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import {
   ShieldAlert,
   AlertTriangle,
@@ -35,20 +34,56 @@ export default function RiskAgent({
   const [revenue, setRevenue] = useState("");
   const [expense, setExpense] = useState("");
 
-  const [customResult, setCustomResult] =
-    useState<RiskAnalysisResult | null>(null);
+  const [customResultState, setCustomResultState] =
+    useState<{
+      source: RiskAnalysisResult | null;
+      result: RiskAnalysisResult;
+    } | null>(null);
 
   const [customLoading, setCustomLoading] =
     useState(false);
 
-  const [error, setError] = useState("");
+  const [errorState, setErrorState] = useState<{
+    source: RiskAnalysisResult | null;
+    message: string;
+  } | null>(null);
+
   const [showCustomForm, setShowCustomForm] =
     useState(false);
 
-  useEffect(() => {
-    setCustomResult(null);
-    setError("");
-  }, [automaticRiskResult]);
+  const customResult =
+    customResultState?.source === automaticRiskResult
+      ? customResultState.result
+      : null;
+
+  const error =
+    errorState?.source === automaticRiskResult
+      ? errorState.message
+      : "";
+
+  const updateCustomResult = (
+    result: RiskAnalysisResult | null
+  ) => {
+    setCustomResultState(
+      result
+        ? {
+            source: automaticRiskResult,
+            result,
+          }
+        : null
+    );
+  };
+
+  const updateError = (message: string) => {
+    setErrorState(
+      message
+        ? {
+            source: automaticRiskResult,
+            message,
+          }
+        : null
+    );
+  };
 
   const displayResult =
     customResult ?? automaticRiskResult;
@@ -56,15 +91,15 @@ export default function RiskAgent({
   const handleCustomAnalyze = async () => {
     if (customLoading || isLoading) return;
 
-    setError("");
-    setCustomResult(null);
+    updateError("");
+    updateCustomResult(null);
 
     if (
       quantity.trim() === "" ||
       revenue.trim() === "" ||
       expense.trim() === ""
     ) {
-      setError("Please fill in all fields.");
+      updateError("Please fill in all fields.");
       return;
     }
 
@@ -77,21 +112,21 @@ export default function RiskAgent({
     if (
       values.some((value) => !Number.isFinite(value))
     ) {
-      setError("Please enter valid numeric values.");
+      updateError("Please enter valid numeric values.");
       return;
     }
 
     const [q, r, e] = values;
 
     if (q <= 0) {
-      setError(
+      updateError(
         "Quantity must be greater than zero."
       );
       return;
     }
 
     if (r < 0 || e < 0) {
-      setError(
+      updateError(
         "Revenue and Expense cannot be negative."
       );
       return;
@@ -160,9 +195,9 @@ export default function RiskAgent({
         );
       }
 
-      setCustomResult(result);
+      updateCustomResult(result);
     } catch (err: unknown) {
-      setError(
+      updateError(
         err instanceof Error
           ? err.message
           : "Unable to connect to EVORA backend."
@@ -179,8 +214,8 @@ export default function RiskAgent({
     setRevenue("");
     setExpense("");
 
-    setCustomResult(null);
-    setError("");
+    updateCustomResult(null);
+    updateError("");
     setShowCustomForm(false);
   };
 
@@ -286,7 +321,7 @@ export default function RiskAgent({
                 value={quantity}
                 onChange={(event) => {
                   setQuantity(event.target.value);
-                  setCustomResult(null);
+                  updateCustomResult(null);
                 }}
                 disabled={customLoading}
                 className="w-full px-3 py-2 text-sm bg-white rounded-lg border border-slate-200 focus:outline-none focus:ring-2 focus:ring-blue-500"
@@ -310,7 +345,7 @@ export default function RiskAgent({
                 value={revenue}
                 onChange={(event) => {
                   setRevenue(event.target.value);
-                  setCustomResult(null);
+                  updateCustomResult(null);
                 }}
                 disabled={customLoading}
                 className="w-full px-3 py-2 text-sm bg-white rounded-lg border border-slate-200 focus:outline-none focus:ring-2 focus:ring-blue-500"
@@ -334,7 +369,7 @@ export default function RiskAgent({
                 value={expense}
                 onChange={(event) => {
                   setExpense(event.target.value);
-                  setCustomResult(null);
+                  updateCustomResult(null);
                 }}
                 disabled={customLoading}
                 className="w-full px-3 py-2 text-sm bg-white rounded-lg border border-slate-200 focus:outline-none focus:ring-2 focus:ring-blue-500"

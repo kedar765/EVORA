@@ -6,7 +6,9 @@ import {
   useCallback,
   useContext,
   useEffect,
+  useRef,
   useState,
+  useSyncExternalStore,
   type ReactNode,
 } from "react";
 
@@ -114,6 +116,95 @@ function readStoredData<T>(
   }
 }
 
+interface DashboardSnapshot {
+  uploadResult: UploadResult | null;
+  datasetPreview: DatasetPreviewData | null;
+  fullDataset: FullDatasetData | null;
+}
+
+const EMPTY_DASHBOARD_SNAPSHOT: DashboardSnapshot = {
+  uploadResult: null,
+  datasetPreview: null,
+  fullDataset: null,
+};
+
+const dashboardSnapshots = new Map<string, DashboardSnapshot>();
+const initializedUsers = new Set<string>();
+const dashboardListeners = new Set<() => void>();
+
+function subscribeDashboard(listener: () => void) {
+  dashboardListeners.add(listener);
+
+  return () => {
+    dashboardListeners.delete(listener);
+  };
+}
+
+function notifyDashboardListeners() {
+  dashboardListeners.forEach((listener) => listener());
+}
+
+function getDashboardSnapshot(userId: string | null): DashboardSnapshot {
+  if (!userId || typeof window === "undefined") {
+    return EMPTY_DASHBOARD_SNAPSHOT;
+  }
+
+  if (!initializedUsers.has(userId)) {
+    const savedUpload = readStoredData<UploadResult>(
+      STORAGE_KEYS.upload,
+      userId
+    );
+
+    const savedPreview = readStoredData<DatasetPreviewData>(
+      STORAGE_KEYS.preview,
+      userId
+    );
+
+    const savedDataset = readStoredData<FullDatasetData>(
+      STORAGE_KEYS.dataset,
+      userId
+    );
+
+    const validUpload =
+      savedUpload?.success === true &&
+      savedUpload.metrics != null;
+
+    dashboardSnapshots.set(
+      userId,
+      validUpload
+        ? {
+          uploadResult: savedUpload,
+          datasetPreview: savedPreview,
+          fullDataset: savedDataset,
+        }
+        : EMPTY_DASHBOARD_SNAPSHOT
+    );
+
+    initializedUsers.add(userId);
+  }
+
+  return dashboardSnapshots.get(userId) ?? EMPTY_DASHBOARD_SNAPSHOT;
+}
+
+function updateDashboardSnapshot(
+  userId: string,
+  updater: (current: DashboardSnapshot) => DashboardSnapshot
+) {
+  const current = getDashboardSnapshot(userId);
+  dashboardSnapshots.set(userId, updater(current));
+  notifyDashboardListeners();
+}
+
+function clearDashboardSnapshot(userId: string) {
+  dashboardSnapshots.delete(userId);
+  initializedUsers.delete(userId);
+  notifyDashboardListeners();
+}
+
+function getServerDashboardSnapshot() {
+  return EMPTY_DASHBOARD_SNAPSHOT;
+}
+
 function parseCsvLine(line: string): string[] {
   const values: string[] = [];
   let current = "";
@@ -178,7 +269,7 @@ export function parseFullCsv(
 
       record[header] =
         value !== "" &&
-        Number.isFinite(numericValue)
+          Number.isFinite(numericValue)
           ? numericValue
           : value;
     });
@@ -212,7 +303,6 @@ export function parseCsvToPreview(
     totalRows: dataset.totalRows,
   };
 }
-
 export function DashboardProvider({
   children,
 }: {
@@ -225,70 +315,46 @@ export function DashboardProvider({
       ? user.id
       : null;
 
-  const [uploadResult, setUploadResultState] =
-    useState<UploadResult | null>(null);
+  const previousUserId = useRef<string | null>(null);
 
-  const [datasetPreview, setDatasetPreviewState] =
-    useState<DatasetPreviewData | null>(null);
+  const snapshot = useSyncExternalStore(
+    subscribeDashboard,
+    () => getDashboardSnapshot(userId),
+    getServerDashboardSnapshot
+  );
 
-  const [fullDataset, setFullDatasetState] =
-    useState<FullDatasetData | null>(null);
+  const {
+    uploadResult,
+    datasetPreview,
+    fullDataset,
+  } = snapshot;
 
-  const [isUploading, setIsUploading] =
-    useState(false);
+  const [isUploading, setIsUploading] = useState(false);
 
-  const clearDataset = useCallback(() => {
-    setUploadResultState(null);
-    setDatasetPreviewState(null);
-    setFullDatasetState(null);
-    setIsUploading(false);
-
-    removeStoredData();
-  }, []);
-
-  // Restore saved data when the authenticated
-  // user changes, not after every upload.
   useEffect(() => {
-    if (!userId) {
-      setUploadResultState(null);
-      setDatasetPreviewState(null);
-      setFullDatasetState(null);
-      removeStoredData();
-      return;
+    const previous = previousUserId.current;
+
+    if (previous && previous !== userId) {
+      clearDashboardSnapshot(previous);
     }
 
-    const savedUpload = readStoredData<UploadResult>(
-      STORAGE_KEYS.upload,
-      userId
-    );
+    if (!userId) {
+      removeStoredData();
+    }
 
-    const savedPreview =
-      readStoredData<DatasetPreviewData>(
-        STORAGE_KEYS.preview,
-        userId
+    previousUserId.current = userId;
+  }, [userId]);
+
+  const clearDataset = useCallback(() => {
+    if (userId) {
+      updateDashboardSnapshot(
+        userId,
+        () => EMPTY_DASHBOARD_SNAPSHOT
       );
+    }
 
-    const savedDataset =
-      readStoredData<FullDatasetData>(
-        STORAGE_KEYS.dataset,
-        userId
-      );
-
-    const validUpload =
-      savedUpload?.success === true &&
-      savedUpload.metrics != null;
-
-    setUploadResultState(
-      validUpload ? savedUpload : null
-    );
-
-    setDatasetPreviewState(
-      validUpload ? savedPreview : null
-    );
-
-    setFullDatasetState(
-      validUpload ? savedDataset : null
-    );
+    setIsUploading(false);
+    removeStoredData();
   }, [userId]);
 
   const setUploadResult = useCallback(
@@ -299,12 +365,13 @@ export function DashboardProvider({
       }
 
       if (!userId) {
-        throw new Error(
-          "Login session is not available."
-        );
+        throw new Error("Login session is not available.");
       }
 
-      setUploadResultState(result);
+      updateDashboardSnapshot(userId, (current) => ({
+        ...current,
+        uploadResult: result,
+      }));
 
       saveStoredData(
         STORAGE_KEYS.upload,
@@ -331,12 +398,9 @@ export function DashboardProvider({
         !data.metrics ||
         !Number.isFinite(data.rows_processed)
       ) {
-        throw new Error(
-          "Invalid CSV analysis result."
-        );
+        throw new Error("Invalid CSV analysis result.");
       }
 
-      // Parse the new dataset before updating state.
       const dataset =
         rawCsvText !== undefined
           ? parseFullCsv(rawCsvText)
@@ -347,12 +411,12 @@ export function DashboardProvider({
           ? parseCsvToPreview(rawCsvText)
           : null;
 
-      // Update Dashboard immediately.
-      setUploadResultState(data);
-      setFullDatasetState(dataset);
-      setDatasetPreviewState(preview);
+      updateDashboardSnapshot(userId, () => ({
+        uploadResult: data,
+        fullDataset: dataset,
+        datasetPreview: preview,
+      }));
 
-      // Save the result for the current user.
       saveStoredData(
         STORAGE_KEYS.upload,
         userId,
@@ -373,13 +437,8 @@ export function DashboardProvider({
         );
       } else {
         try {
-          sessionStorage.removeItem(
-            STORAGE_KEYS.dataset
-          );
-
-          sessionStorage.removeItem(
-            STORAGE_KEYS.preview
-          );
+          sessionStorage.removeItem(STORAGE_KEYS.dataset);
+          sessionStorage.removeItem(STORAGE_KEYS.preview);
         } catch {
           // Ignore storage errors.
         }

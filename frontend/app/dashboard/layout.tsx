@@ -53,9 +53,8 @@ export default function DashboardLayout({
     if (isLoading) return;
 
     if (!isAuthenticated || !user?.id) {
-      setSessionStatus("unauthorized");
-      router.replace("/login");
-      return;
+    router.replace("/login");
+    return;
     }
 
     let active = true;
@@ -176,7 +175,7 @@ export default function DashboardLayout({
 
   if (
     isLoading ||
-    sessionStatus === "checking"
+    (isAuthenticated && !!user?.id && sessionStatus === "checking")
   ) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-slate-50">
