@@ -197,20 +197,27 @@ def require_forecast_model():
 
 def risk_details(
     predicted_profit: float | None,
-    anomaly_detected: bool,
+    anomaly_percentage: float,
     profit_margin: float,
 ):
-    score = 60 if anomaly_detected else 10
+    score = 5
 
-    if profit_margin < 0:
+    if anomaly_percentage > 3:
         score += 25
-    elif profit_margin < 10:
+    elif anomaly_percentage > 1:
         score += 15
-    elif profit_margin < 20:
+    elif anomaly_percentage > 0:
         score += 5
 
+    if profit_margin < 0:
+        score += 35
+    elif profit_margin < 10:
+        score += 20
+    elif profit_margin < 20:
+        score += 10
+
     if predicted_profit is not None and predicted_profit < 0:
-        score += 15
+        score += 20
 
     score = int(max(0, min(100, score)))
 
@@ -251,8 +258,9 @@ def make_feature_frame(
 # CSV Validation and Private Storage
 # ---------------------------------------
 
-MAX_UPLOAD_SIZE_BYTES = 25 * 1024 * 1024  # 25 MB
+MAX_UPLOAD_SIZE_BYTES = 25 * 1024 * 1024
 UPLOAD_STORAGE_DIR = ROOT_DIR / "backend" / "storage" / "uploads"
+
 
 def make_json_safe(value):
     """Convert common Pandas/NumPy values into JSON-safe values."""
@@ -488,6 +496,10 @@ async def read_business_csv(
             dataframe[column],
             errors="coerce",
         )
+        dataframe[column] = dataframe[column].replace(
+            [float("inf"), float("-inf")],
+            pd.NA,
+        )
 
     dataframe = dataframe.dropna(
         subset=required_columns
@@ -593,9 +605,13 @@ async def upload_csv(
 
     anomaly_detected = anomaly_count > 0
 
+    anomaly_percentage = (
+        anomaly_count / len(df)
+    ) * 100
+
     score, level = risk_details(
         predicted_profit,
-        anomaly_detected,
+        anomaly_percentage,
         profit_margin,
     )
 
@@ -663,14 +679,17 @@ async def upload_csv(
     try:
         await file.seek(0)
         file_contents = await file.read()
-        dataset_id = persist_uploaded_dataset(
-            file_contents=file_contents,
-            original_filename=file.filename,
-            dataframe=df,
-            user_id=user["id"],
-            analysis_result=response_data,
-            original_columns=original_columns,
-        )
+        user_id = user.get("id") if isinstance(user, dict) else None
+        if user_id:
+            dataset_id = persist_uploaded_dataset(
+                file_contents=file_contents,
+                original_filename=file.filename,
+                dataframe=df,
+                user_id=user_id,
+                analysis_result=response_data,
+                original_columns=original_columns,
+            )
+            response_data["dataset_id"] = dataset_id
     except HTTPException:
         raise
     except Exception as exc:
@@ -680,7 +699,6 @@ async def upload_csv(
             detail="Analysis completed, but the dataset could not be saved.",
         ) from exc
 
-    response_data["dataset_id"] = dataset_id
     return response_data
 
 
@@ -711,7 +729,6 @@ def _get_owned_dataset(connection, dataset_id: str, user_id: str):
     ).fetchone()
 
     if row is None:
-        # Use 404 for both unknown and other users' IDs to avoid ID disclosure.
         raise HTTPException(
             status_code=404,
             detail="Dataset not found.",
@@ -1037,19 +1054,20 @@ def predict_profit(
         "predicted_profit": prediction,
     }
 
-    analysis_id, created_at = save_analysis_history(
-        user_id=user["id"],
-        analysis_type="profit_prediction",
-        input_summary={
-            "quantity": data.Quantity,
-            "revenue": data.Revenue,
-            "expense": data.Expense,
-        },
-        result=response,
-    )
-
-    response["analysis_id"] = analysis_id
-    response["created_at"] = created_at
+    user_id = user.get("id") if isinstance(user, dict) else None
+    if user_id:
+        analysis_id, created_at = save_analysis_history(
+            user_id=user_id,
+            analysis_type="profit_prediction",
+            input_summary={
+                "quantity": data.Quantity,
+                "revenue": data.Revenue,
+                "expense": data.Expense,
+            },
+            result=response,
+        )
+        response["analysis_id"] = analysis_id
+        response["created_at"] = created_at
     return response
 
 
@@ -1096,9 +1114,13 @@ def analyze_risk(
         df["Profit_Margin"].iloc[0]
     )
 
+    anomaly_percentage = (
+    100.0 if anomaly_detected else 0.0
+)
+
     score, level = risk_details(
         predicted_profit,
-        anomaly_detected,
+        anomaly_percentage,
         profit_margin,
     )
 
@@ -1118,19 +1140,20 @@ def analyze_risk(
         "risk_analysis": risk_analysis,
     }
 
-    analysis_id, created_at = save_analysis_history(
-        user_id=user["id"],
-        analysis_type="risk_analysis",
-        input_summary={
-            "quantity": data.Quantity,
-            "revenue": data.Revenue,
-            "expense": data.Expense,
-        },
-        result=response,
-    )
-
-    response["analysis_id"] = analysis_id
-    response["created_at"] = created_at
+    user_id = user.get("id") if isinstance(user, dict) else None
+    if user_id:
+        analysis_id, created_at = save_analysis_history(
+            user_id=user_id,
+            analysis_type="risk_analysis",
+            input_summary={
+                "quantity": data.Quantity,
+                "revenue": data.Revenue,
+                "expense": data.Expense,
+            },
+            result=response,
+        )
+        response["analysis_id"] = analysis_id
+        response["created_at"] = created_at
     return response
 
 
@@ -1196,23 +1219,25 @@ def what_if_analysis(
         "result": result,
     }
 
-    analysis_id, created_at = save_analysis_history(
-        user_id=user["id"],
-        analysis_type="what_if_analysis",
-        input_summary={
-            "current_quantity": data.current_quantity,
-            "current_revenue": data.current_revenue,
-            "current_expense": data.current_expense,
-            "new_quantity": data.new_quantity,
-            "new_revenue": data.new_revenue,
-            "new_expense": data.new_expense,
-        },
-        result=response,
-    )
-
-    response["analysis_id"] = analysis_id
-    response["created_at"] = created_at
+    user_id = user.get("id") if isinstance(user, dict) else None
+    if user_id:
+        analysis_id, created_at = save_analysis_history(
+            user_id=user_id,
+            analysis_type="what_if_analysis",
+            input_summary={
+                "current_quantity": data.current_quantity,
+                "current_revenue": data.current_revenue,
+                "current_expense": data.current_expense,
+                "new_quantity": data.new_quantity,
+                "new_revenue": data.new_revenue,
+                "new_expense": data.new_expense,
+            },
+            result=response,
+        )
+        response["analysis_id"] = analysis_id
+        response["created_at"] = created_at
     return response
+
 
 # ---------------------------------------
 # Decision Optimization
@@ -1229,7 +1254,6 @@ def get_decision_recommendations(
     data: DecisionRecommendationRequest,
     user: dict = Depends(get_current_user),
 ):
-    # Generate decision recommendations
     decision_result = decision_agent.recommend(
         analytics=data.analytics,
         risk=data.risk,
@@ -1241,7 +1265,6 @@ def get_decision_recommendations(
         "decision": make_json_safe(decision_result),
     }
 
-    # Extract risk level for history
     risk_level = None
 
     if data.risk:
@@ -1253,21 +1276,21 @@ def get_decision_recommendations(
             if isinstance(risk_analysis, dict):
                 risk_level = risk_analysis.get("risk_level")
 
-    # Save decision history
-    analysis_id, created_at = save_analysis_history(
-        user_id=user["id"],
-        analysis_type="decision_recommendation",
-        input_summary={
-            "risk_level": risk_level,
-            "has_analytics": data.analytics is not None,
-            "has_risk": data.risk is not None,
-            "has_scenario": data.scenario is not None,
-        },
-        result=response,
-    )
-
-    response["analysis_id"] = analysis_id
-    response["created_at"] = created_at
+    user_id = user.get("id") if isinstance(user, dict) else None
+    if user_id:
+        analysis_id, created_at = save_analysis_history(
+            user_id=user_id,
+            analysis_type="decision_recommendation",
+            input_summary={
+                "risk_level": risk_level,
+                "has_analytics": data.analytics is not None,
+                "has_risk": data.risk is not None,
+                "has_scenario": data.scenario is not None,
+            },
+            result=response,
+        )
+        response["analysis_id"] = analysis_id
+        response["created_at"] = created_at
 
     return response
 
@@ -1304,15 +1327,16 @@ async def analytics(
         "columns": [str(column) for column in df.columns],
     }
 
-    analysis_id, created_at = save_analysis_history(
-        user_id=user["id"],
-        analysis_type="business_analytics",
-        input_summary=input_summary,
-        result=response,
-    )
-
-    response["analysis_id"] = analysis_id
-    response["created_at"] = created_at
+    user_id = user.get("id") if isinstance(user, dict) else None
+    if user_id:
+        analysis_id, created_at = save_analysis_history(
+            user_id=user_id,
+            analysis_type="business_analytics",
+            input_summary=input_summary,
+            result=response,
+        )
+        response["analysis_id"] = analysis_id
+        response["created_at"] = created_at
     return response
 
 
@@ -1336,23 +1360,30 @@ def get_next_day_forecast(
         ) from exc
 
     response = make_json_safe(forecast_result)
-    analysis_id, created_at = save_analysis_history(
-        user_id=user["id"],
-        analysis_type="future_profit_forecast",
-        input_summary={"source": "stored_forecast_history"},
-        result=response if isinstance(response, dict) else {"prediction": response},
-    )
+    user_id = user.get("id") if isinstance(user, dict) else None
+    if user_id:
+        analysis_id, created_at = save_analysis_history(
+            user_id=user_id,
+            analysis_type="future_profit_forecast",
+            input_summary={"source": "stored_forecast_history"},
+            result=response if isinstance(response, dict) else {"prediction": response},
+        )
 
-    if isinstance(response, dict):
-        response["analysis_id"] = analysis_id
-        response["created_at"] = created_at
-        return response
+        if isinstance(response, dict):
+            response["analysis_id"] = analysis_id
+            response["created_at"] = created_at
+            return response
 
-    return {
+        return {
+            "success": True,
+            "prediction": response,
+            "analysis_id": analysis_id,
+            "created_at": created_at,
+        }
+
+    return response if isinstance(response, dict) else {
         "success": True,
         "prediction": response,
-        "analysis_id": analysis_id,
-        "created_at": created_at,
     }
 
 
@@ -1377,27 +1408,33 @@ async def post_next_day_forecast(
         ) from exc
 
     response = make_json_safe(forecast_result)
-    input_summary = {
-        "original_filename": (file.filename or "uploaded.csv").replace("\\", "/").split("/")[-1][:255],
-        "rows_processed": int(len(df)),
-        "columns": [str(column) for column in df.columns],
-    }
-    analysis_id, created_at = save_analysis_history(
-        user_id=user["id"],
-        analysis_type="future_profit_forecast",
-        input_summary=input_summary,
-        result=response if isinstance(response, dict) else {"prediction": response},
-    )
+    user_id = user.get("id") if isinstance(user, dict) else None
+    if user_id:
+        input_summary = {
+            "original_filename": (file.filename or "uploaded.csv").replace("\\", "/").split("/")[-1][:255],
+            "rows_processed": int(len(df)),
+            "columns": [str(column) for column in df.columns],
+        }
+        analysis_id, created_at = save_analysis_history(
+            user_id=user_id,
+            analysis_type="future_profit_forecast",
+            input_summary=input_summary,
+            result=response if isinstance(response, dict) else {"prediction": response},
+        )
 
-    if isinstance(response, dict):
-        response["analysis_id"] = analysis_id
-        response["created_at"] = created_at
-        return response
+        if isinstance(response, dict):
+            response["analysis_id"] = analysis_id
+            response["created_at"] = created_at
+            return response
 
-    return {
+        return {
+            "success": True,
+            "prediction": response,
+            "analysis_id": analysis_id,
+            "created_at": created_at,
+        }
+
+    return response if isinstance(response, dict) else {
         "success": True,
         "prediction": response,
-        "analysis_id": analysis_id,
-        "created_at": created_at,
     }
-

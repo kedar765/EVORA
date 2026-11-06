@@ -33,7 +33,7 @@ X = normal_df[features].astype(float)
 
 model = IsolationForest(
     n_estimators=200,
-    contamination="auto",
+    contamination=0.02,
     random_state=42
 )
 

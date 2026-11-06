@@ -1,39 +1,50 @@
 import json
-import urllib.request
-import io
-import pandas as pd
+import sys
+from pathlib import Path
 
-BASE_URL = "http://127.0.0.1:8000"
+ROOT_DIR = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT_DIR))
+
+from fastapi.testclient import TestClient
+from backend.main import app
+import backend.auth as auth
+
+client = TestClient(app)
+headers = {"Origin": "http://localhost:3000"}
+
+def setup_auth():
+    with auth.database() as conn:
+        conn.execute("DELETE FROM signup_attempts")
+        conn.execute("DELETE FROM login_attempts")
+    client.post(
+        "/api/auth/signup",
+        headers=headers,
+        json={"fullName": "Agent Evaluator", "email": "agent_eval@example.com", "password": "AgentEvalPass123!"},
+    )
+    client.post(
+        "/api/auth/login",
+        headers=headers,
+        json={"email": "agent_eval@example.com", "password": "AgentEvalPass123!"},
+    )
 
 def post_json(endpoint, data):
-    url = f"{BASE_URL}{endpoint}"
-    req = urllib.request.Request(
-        url,
-        data=json.dumps(data).encode("utf-8"),
-        headers={"Content-Type": "application/json"}
-    )
-    with urllib.request.urlopen(req) as resp:
-        return json.loads(resp.read().decode())
+    res = client.post(endpoint, headers=headers, json=data)
+    if res.status_code != 200:
+        raise RuntimeError(f"Request to {endpoint} failed with {res.status_code}: {res.text}")
+    return res.json()
 
 def post_csv(endpoint, csv_content, filename="test.csv"):
-    boundary = "----WebKitFormBoundary7MA4YWxkTrZu0gW"
-    body = (
-        f"--{boundary}\r\n"
-        f'Content-Disposition: form-data; name="file"; filename="{filename}"\r\n'
-        f"Content-Type: text/csv\r\n\r\n"
-        f"{csv_content}\r\n"
-        f"--{boundary}--\r\n"
-    ).encode("utf-8")
-    
-    req = urllib.request.Request(
-        f"{BASE_URL}{endpoint}",
-        data=body,
-        headers={"Content-Type": f"multipart/form-data; boundary={boundary}"}
+    res = client.post(
+        endpoint,
+        headers=headers,
+        files={"file": (filename, csv_content.encode("utf-8"), "text/csv")},
     )
-    with urllib.request.urlopen(req) as resp:
-        return json.loads(resp.read().decode())
+    if res.status_code != 200:
+        raise RuntimeError(f"Request to {endpoint} failed with {res.status_code}: {res.text}")
+    return res.json()
 
 def run_evaluation():
+    setup_auth()
     print("==================================================")
     print("EVORA AGENT EVALUATION SUITE")
     print("==================================================")

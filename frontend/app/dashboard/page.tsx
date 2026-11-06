@@ -139,8 +139,7 @@ export default function DashboardPage() {
             <button
               type="button"
               onClick={() => {
-                clearDataset();
-                setShowUploadTray(true);
+               setShowUploadTray(true);
               }}
               disabled={isUploading}
               className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold text-rose-700 bg-rose-50 hover:bg-rose-100 border border-rose-200 disabled:opacity-50"

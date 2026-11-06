@@ -41,7 +41,6 @@ export default function DataManagementPage() {
       <section aria-labelledby="upload-section-heading">
         <CsvUpload
           onUploadSuccess={handleUploadSuccess}
-          onUploadStart={clearDataset}
           isLoading={isUploading}
           setIsLoading={setIsUploading}
           uploadedFilename={uploadResult?.filename}

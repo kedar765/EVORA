@@ -1,25 +1,38 @@
 import json
-import urllib.request
+import sys
+from pathlib import Path
+
+ROOT_DIR = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT_DIR))
+
+from fastapi.testclient import TestClient
+from backend.main import app
+import backend.auth as auth
 
 def upload_csv_content(csv_str, filename="test.csv"):
-    boundary = '----WebKitFormBoundaryTest123'
-    header = (
-        f"--{boundary}\r\n"
-        f'Content-Disposition: form-data; name="file"; filename="{filename}"\r\n'
-        f"Content-Type: text/csv\r\n\r\n"
-        f"{csv_str}\r\n"
-        f"--{boundary}--\r\n"
+    client = TestClient(app)
+    headers = {"Origin": "http://localhost:3000"}
+    with auth.database() as conn:
+        conn.execute("DELETE FROM signup_attempts")
+        conn.execute("DELETE FROM login_attempts")
+    client.post(
+        "/api/auth/signup",
+        headers=headers,
+        json={"fullName": "Pipeline Tester", "email": "pipeline_up@example.com", "password": "PipelinePass123!"},
     )
-    body = header.encode("utf-8")
-
-    req = urllib.request.Request(
-        'http://127.0.0.1:8000/upload',
-        data=body,
-        headers={'Content-Type': 'multipart/form-data; boundary=' + boundary}
+    client.post(
+        "/api/auth/login",
+        headers=headers,
+        json={"email": "pipeline_up@example.com", "password": "PipelinePass123!"},
     )
-
-    with urllib.request.urlopen(req) as resp:
-        return json.loads(resp.read().decode())
+    res = client.post(
+        "/upload",
+        headers=headers,
+        files={"file": (filename, csv_str.encode("utf-8"), "text/csv")},
+    )
+    if res.status_code != 200:
+        raise RuntimeError(f"Upload failed with {res.status_code}: {res.text}")
+    return res.json()
 
 def run_tests():
     # 1. Normal data

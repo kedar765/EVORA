@@ -19,7 +19,6 @@ interface CsvUploadProps {
     uploadData: UploadResult,
     rawCsvText?: string
   ) => void;
-  onUploadStart?: () => void;
   isLoading: boolean;
   setIsLoading: (loading: boolean) => void;
   uploadedFilename?: string;
@@ -64,7 +63,6 @@ function getErrorMessage(
 
 export default function CsvUpload({
   onUploadSuccess,
-  onUploadStart,
   isLoading,
   setIsLoading,
   uploadedFilename,
@@ -114,7 +112,6 @@ export default function CsvUpload({
     if (isLoading) return;
 
     setError("");
-    onUploadStart?.();
     setIsLoading(true);
 
     try {
