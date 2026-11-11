@@ -32,6 +32,19 @@ export interface AnalyticsData {
   total_profit: number;
   profit_margin: number;
   insights: string[];
+  recommendations?: string[];
+  product_performance?: Array<{
+    product: string;
+    revenue: number;
+    expense: number;
+    profit: number;
+  }>;
+  monthly_trends?: Array<{
+    month: string;
+    revenue: number;
+    expense: number;
+    profit: number;
+  }>;
 }
 
 export interface AnalyticsResult {

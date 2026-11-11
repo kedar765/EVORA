@@ -14,11 +14,13 @@ import { UploadResult, FullDatasetData, formatINR } from "./types";
 interface RiskDetailsCardProps {
   uploadResult: UploadResult | null;
   fullDataset?: FullDatasetData | null;
+  showLinkToRiskPage?: boolean;
 }
 
 export default function RiskDetailsCard({
   uploadResult,
   fullDataset,
+  showLinkToRiskPage = true,
 }: RiskDetailsCardProps) {
   const hasData = !!uploadResult;
   const riskScore = uploadResult?.risk_score ?? 0;
@@ -101,13 +103,15 @@ export default function RiskDetailsCard({
               {riskLevel} RISK
             </span>
           )}
-          <Link
-            href="/dashboard/risk"
-            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold text-slate-700 bg-slate-100 hover:bg-slate-200 border border-slate-200/80 transition-colors"
-          >
-            <SlidersHorizontal className="w-3.5 h-3.5 text-slate-500" />
-            <span>Full Risk Diagnostics</span>
-          </Link>
+          {showLinkToRiskPage && (
+            <Link
+              href="/dashboard/risk"
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold text-slate-700 bg-slate-100 hover:bg-slate-200 border border-slate-200/80 transition-colors"
+            >
+              <SlidersHorizontal className="w-3.5 h-3.5 text-slate-500" />
+              <span>Full Risk Diagnostics</span>
+            </Link>
+          )}
         </div>
       </div>
 

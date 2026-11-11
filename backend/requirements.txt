@@ -6,3 +6,6 @@ scikit-learn
 joblib
 python-multipart
 openpyxl
+langchain-google-genai
+langchain-groq
+python-dotenv

@@ -45,6 +45,22 @@ export default function WhatIfAnalysis({
 
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState("");
+  const [prevMetrics, setPrevMetrics] = useState<BusinessMetrics | null>(null);
+
+  if (currentMetrics !== prevMetrics) {
+    setPrevMetrics(currentMetrics);
+    if (currentMetrics && !currentQuantity && !currentRevenue && !currentExpense) {
+      const quantity = String(currentMetrics.total_sales);
+      const revenue = String(currentMetrics.total_revenue);
+      const expense = String(currentMetrics.total_expense);
+      setCurrentQuantity(quantity);
+      setCurrentRevenue(revenue);
+      setCurrentExpense(expense);
+      setNewQuantity(quantity);
+      setNewRevenue(revenue);
+      setNewExpense(expense);
+    }
+  }
 
   const handlePopulateFromCurrent = () => {
     if (!currentMetrics || isLoading) return;

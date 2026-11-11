@@ -308,7 +308,7 @@ export function DashboardProvider({
 }: {
   children: ReactNode;
 }) {
-  const { user, isAuthenticated } = useAuth();
+  const { user, isAuthenticated, isLoading } = useAuth();
 
   const userId =
     isAuthenticated && user?.id
@@ -332,18 +332,20 @@ export function DashboardProvider({
   const [isUploading, setIsUploading] = useState(false);
 
   useEffect(() => {
+    if (isLoading) return;
+
     const previous = previousUserId.current;
 
     if (previous && previous !== userId) {
       clearDashboardSnapshot(previous);
     }
 
-    if (!userId) {
+    if (!isAuthenticated || !userId) {
       removeStoredData();
     }
 
     previousUserId.current = userId;
-  }, [userId]);
+  }, [userId, isAuthenticated, isLoading]);
 
   const clearDataset = useCallback(() => {
     if (userId) {
@@ -411,10 +413,10 @@ export function DashboardProvider({
           ? parseCsvToPreview(rawCsvText)
           : null;
 
-      updateDashboardSnapshot(userId, () => ({
+      updateDashboardSnapshot(userId, (current) => ({
         uploadResult: data,
-        fullDataset: dataset,
-        datasetPreview: preview,
+        fullDataset: dataset ?? current.fullDataset,
+        datasetPreview: preview ?? current.datasetPreview,
       }));
 
       saveStoredData(
@@ -435,13 +437,6 @@ export function DashboardProvider({
           userId,
           preview
         );
-      } else {
-        try {
-          sessionStorage.removeItem(STORAGE_KEYS.dataset);
-          sessionStorage.removeItem(STORAGE_KEYS.preview);
-        } catch {
-          // Ignore storage errors.
-        }
       }
     },
     [userId]

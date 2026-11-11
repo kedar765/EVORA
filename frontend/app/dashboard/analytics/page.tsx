@@ -72,6 +72,7 @@ export default function BusinessAnalyticsPage() {
       <section aria-labelledby="chart-heading">
         <RevenueExpenseChart
           fullDataset={fullDataset}
+          uploadResult={uploadResult}
           isLoading={isUploading}
         />
       </section>

@@ -7,10 +7,11 @@ import {
   Layers,
   Info,
 } from "lucide-react";
-import { FullDatasetData, formatINR } from "./types";
+import { FullDatasetData, UploadResult, formatINR } from "./types";
 
 interface RevenueExpenseChartProps {
   fullDataset: FullDatasetData | null;
+  uploadResult?: UploadResult | null;
   isLoading?: boolean;
 }
 
@@ -24,13 +25,55 @@ interface ChartDataPoint {
 
 export default function RevenueExpenseChart({
   fullDataset,
+  uploadResult,
   isLoading = false,
 }: RevenueExpenseChartProps) {
   const [hoveredIndex, setHoveredIndex] = useState<number | null>(null);
 
-  // Derive aggregated chart series strictly from actual records
+  // Derive aggregated chart series strictly from actual records or backend analytics
   const { chartData, groupingMode, maxVal } = useMemo(() => {
     if (!fullDataset || !fullDataset.records || fullDataset.records.length === 0) {
+      // Fallback 1: Backend monthly trends if available
+      const trends = uploadResult?.analytics?.monthly_trends;
+      if (trends && trends.length > 0) {
+        const points: ChartDataPoint[] = trends.map((t) => {
+          const rev = Number(t.revenue) || 0;
+          const exp = Number(t.expense) || 0;
+          const prof = Number(t.profit) ?? (rev - exp);
+          const margin = rev > 0 ? (prof / rev) * 100 : 0;
+          return { label: t.month, revenue: rev, expense: exp, profit: prof, margin };
+        });
+        const max = Math.max(...points.map((p) => Math.max(p.revenue, p.expense)), 100);
+        return { chartData: points, groupingMode: "Monthly Trend Analysis", maxVal: max };
+      }
+
+      // Fallback 2: Backend product performance if available
+      const products = uploadResult?.analytics?.product_performance;
+      if (products && products.length > 0) {
+        const points: ChartDataPoint[] = products.map((p) => {
+          const rev = Number(p.revenue) || 0;
+          const exp = Number(p.expense) || 0;
+          const prof = Number(p.profit) ?? (rev - exp);
+          const margin = rev > 0 ? (prof / rev) * 100 : 0;
+          return { label: p.product, revenue: rev, expense: exp, profit: prof, margin };
+        });
+        const max = Math.max(...points.map((p) => Math.max(p.revenue, p.expense)), 100);
+        return { chartData: points, groupingMode: "Product Performance Breakdown", maxVal: max };
+      }
+
+      // Fallback 3: Single overall aggregate if metrics exist
+      if (uploadResult?.metrics) {
+        const rev = uploadResult.metrics.total_revenue || 0;
+        const exp = uploadResult.metrics.total_expense || 0;
+        const prof = uploadResult.metrics.total_profit || 0;
+        const margin = uploadResult.metrics.profit_margin || 0;
+        const points: ChartDataPoint[] = [
+          { label: "Active Dataset Total", revenue: rev, expense: exp, profit: prof, margin }
+        ];
+        const max = Math.max(rev, exp, 100);
+        return { chartData: points, groupingMode: "Aggregate Financial Overview", maxVal: max };
+      }
+
       return { chartData: [], groupingMode: "None", maxVal: 0 };
     }
 
@@ -142,7 +185,7 @@ export default function RevenueExpenseChart({
 
     const max = Math.max(...points.map((p) => Math.max(p.revenue, p.expense)), 100);
     return { chartData: points, groupingMode: "Sequential Record Comparison", maxVal: max };
-  }, [fullDataset]);
+  }, [fullDataset, uploadResult]);
 
   const hasChartData = chartData.length > 0;
 

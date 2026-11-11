@@ -7,6 +7,7 @@ import {
   LayoutDashboard,
   BarChart3,
   BrainCircuit,
+  ShieldAlert,
   Target,
   FileText,
   Settings,
@@ -39,6 +40,11 @@ const navItems = [
     name: "Predictions",
     href: "/dashboard/predictions",
     icon: BrainCircuit,
+  },
+  {
+    name: "Risk Intelligence",
+    href: "/dashboard/risk",
+    icon: ShieldAlert,
   },
   {
     name: "Decision Support",
