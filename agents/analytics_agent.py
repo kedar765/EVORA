@@ -23,6 +23,8 @@ import pandas as pd
 from dotenv import load_dotenv
 from pydantic import BaseModel, Field
 
+from agents.config import create_gemini_chat_model, get_analytics_model, ModelQuotaManager
+
 # Load environment configuration from workspace root if present
 _ROOT_DIR = Path(__file__).resolve().parent.parent
 _ENV_FILE = _ROOT_DIR / ".env"
@@ -68,8 +70,8 @@ class AnalyticsAgent:
             groq_api_key
             or os.getenv("GROQ_API_KEY")
         )
-        self.gemini_model = gemini_model or os.getenv("GEMINI_MODEL", "gemini-3.8-flash")
-        self.groq_model = groq_model or os.getenv("GROQ_MODEL", "openai/gpt-oss-120b")
+        self.gemini_model = gemini_model or get_analytics_model()
+        self.groq_model = groq_model or os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
         
         env_timeout = os.getenv("LLM_TIMEOUT")
         if timeout is not None:
@@ -576,17 +578,20 @@ class AnalyticsAgent:
         if os.getenv("EVORA_SKIP_EXTERNAL_LLM", "0") == "1":
             return AnalyticsToolCallingModel(agent_instance=self)
 
-        if self.gemini_api_key:
+        is_exhausted, _ = ModelQuotaManager.is_exhausted(self.gemini_model)
+        if not is_exhausted and self.gemini_api_key:
             try:
-                from langchain_google_genai import ChatGoogleGenerativeAI
-                return ChatGoogleGenerativeAI(
-                    model=self.gemini_model,
-                    google_api_key=self.gemini_api_key,
-                    temperature=0.1,
+                return create_gemini_chat_model(
+                    model_name=self.gemini_model,
+                    api_key=self.gemini_api_key,
                     timeout=self.timeout,
                 )
             except Exception as e:
-                logger.warning(f"Failed to initialize ChatGoogleGenerativeAI: {e}")
+                logger.warning(f"Failed to initialize ChatGoogleGenerativeAI for AnalyticsAgent: {e}")
+                if ModelQuotaManager.is_quota_error(e):
+                    ModelQuotaManager.mark_exhausted(self.gemini_model, str(e))
+        elif is_exhausted:
+            logger.info("Analytics Agent: Model %s is marked quota-exhausted; skipping direct LLM call.", self.gemini_model)
 
         if self.groq_api_key:
             try:
@@ -659,14 +664,54 @@ class AnalyticsAgent:
         )
 
         # 1. Execute actual LangChain agent
-        agent = self.build_langchain_agent()
-        try:
-            res = agent.invoke({"messages": [HumanMessage(content=prompt)]})
-        except Exception as e:
-            logger.warning(f"Primary LangChain agent invocation failed ({e}); retrying with fallback model.")
+        model_used = self.gemini_model
+        execution_mode = "llm"
+        model_error: Optional[str] = None
+
+        is_exhausted, exhaust_reason = ModelQuotaManager.is_exhausted(self.gemini_model)
+        if is_exhausted or os.getenv("EVORA_SKIP_EXTERNAL_LLM", "0") == "1":
+            execution_mode = "deterministic_fallback"
+            model_used = f"deterministic_fallback (requested: {self.gemini_model})"
+            model_error = exhaust_reason or "External LLM skipped or quota exhausted"
             fallback_model = AnalyticsToolCallingModel(agent_instance=self)
             fallback_agent = self.build_langchain_agent(llm=fallback_model)
             res = fallback_agent.invoke({"messages": [HumanMessage(content=prompt)]})
+        else:
+            agent = self.build_langchain_agent()
+            try:
+                res = agent.invoke({"messages": [HumanMessage(content=prompt)]})
+                execution_mode = "llm"
+                model_used = self.gemini_model
+            except Exception as e:
+                model_error = str(e)
+                logger.warning(f"Primary LangChain agent invocation failed ({e}); checking fallback.")
+                if ModelQuotaManager.is_quota_error(e):
+                    ModelQuotaManager.mark_exhausted(self.gemini_model, str(e))
+
+                groq_succeeded = False
+                if self.groq_api_key:
+                    try:
+                        from langchain_groq import ChatGroq
+                        groq_llm = ChatGroq(
+                            model=self.groq_model,
+                            groq_api_key=self.groq_api_key,
+                            temperature=0.1,
+                            timeout=self.timeout,
+                        )
+                        groq_agent = self.build_langchain_agent(llm=groq_llm)
+                        res = groq_agent.invoke({"messages": [HumanMessage(content=prompt)]})
+                        execution_mode = "groq_fallback"
+                        model_used = self.groq_model
+                        groq_succeeded = True
+                    except Exception as ge:
+                        logger.warning(f"Groq fallback failed: {ge}")
+
+                if not groq_succeeded:
+                    execution_mode = "deterministic_fallback"
+                    model_used = f"deterministic_fallback (requested: {self.gemini_model})"
+                    fallback_model = AnalyticsToolCallingModel(agent_instance=self)
+                    fallback_agent = self.build_langchain_agent(llm=fallback_model)
+                    res = fallback_agent.invoke({"messages": [HumanMessage(content=prompt)]})
 
         # 2. Extract tool messages and findings from the agent conversation
         messages = res.get("messages", [])
@@ -774,6 +819,9 @@ class AnalyticsAgent:
             monthly_trends=trends_res.get("trends", []),
             row_count=len(df),
             summary=summary_text,
+            model_used=model_used,
+            execution_mode=execution_mode,
+            model_error=model_error,
         )
 
 

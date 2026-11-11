@@ -169,9 +169,9 @@ class TestAgentWorkflow(unittest.TestCase):
         self.assertIn("final_report", durations)
 
         statuses = final_state.get("agent_statuses", {})
-        self.assertEqual(statuses.get("analytics_agent"), "completed")
-        self.assertEqual(statuses.get("risk_agent"), "completed")
-        self.assertEqual(statuses.get("decision_agent"), "completed")
+        self.assertIn(statuses.get("analytics_agent"), {"completed", "fallback"})
+        self.assertIn(statuses.get("risk_agent"), {"completed", "fallback"})
+        self.assertIn(statuses.get("decision_agent"), {"completed", "fallback"})
 
     def test_workflow_conditional_routing_on_invalid_dataset(self):
         """Verifies that an invalid or unauthorized dataset routes directly to final report."""

@@ -83,18 +83,24 @@ def analytics_agent_node(state: EVORAAgentState) -> Dict[str, Any]:
     errors = list(state.get("errors", []))
     durations = dict(state.get("step_durations", {}))
     agent_statuses = dict(state.get("agent_statuses", {}))
+    models_used = dict(state.get("models_used", {}))
+    execution_modes = dict(state.get("execution_modes", {}))
 
     try:
         agent = AnalyticsAgent()
         output = agent.run_agent(dataset_id=dataset_id, user_id=user_id, user_query=user_query)
         durations["analytics_agent"] = round(time.perf_counter() - start_time, 4)
-        agent_statuses["analytics_agent"] = "completed"
+        models_used["analytics_agent"] = output.model_used or agent.gemini_model
+        execution_modes["analytics_agent"] = output.execution_mode
+        agent_statuses["analytics_agent"] = "completed" if output.execution_mode == "llm" else "fallback"
         return {
             "analytics_results": output.model_dump(),
             "current_step": "analytics_agent",
             "execution_status": "running",
             "step_durations": durations,
             "agent_statuses": agent_statuses,
+            "models_used": models_used,
+            "execution_modes": execution_modes,
         }
     except Exception as e:
         logger.exception("Analytics agent failed")
@@ -107,6 +113,8 @@ def analytics_agent_node(state: EVORAAgentState) -> Dict[str, Any]:
             "execution_status": "partial",
             "step_durations": durations,
             "agent_statuses": agent_statuses,
+            "models_used": models_used,
+            "execution_modes": execution_modes,
         }
 
 
@@ -123,6 +131,8 @@ def risk_agent_node(state: EVORAAgentState) -> Dict[str, Any]:
     errors = list(state.get("errors", []))
     durations = dict(state.get("step_durations", {}))
     agent_statuses = dict(state.get("agent_statuses", {}))
+    models_used = dict(state.get("models_used", {}))
+    execution_modes = dict(state.get("execution_modes", {}))
 
     try:
         agent = RiskAgent()
@@ -133,13 +143,17 @@ def risk_agent_node(state: EVORAAgentState) -> Dict[str, Any]:
             user_query=user_query,
         )
         durations["risk_agent"] = round(time.perf_counter() - start_time, 4)
-        agent_statuses["risk_agent"] = "completed"
+        models_used["risk_agent"] = output.model_used or agent.gemini_model
+        execution_modes["risk_agent"] = output.execution_mode
+        agent_statuses["risk_agent"] = "completed" if output.execution_mode == "llm" else "fallback"
         return {
             "risk_results": output.model_dump(),
             "current_step": "risk_agent",
             "execution_status": "running",
             "step_durations": durations,
             "agent_statuses": agent_statuses,
+            "models_used": models_used,
+            "execution_modes": execution_modes,
         }
     except Exception as e:
         logger.exception("Risk agent failed")
@@ -152,6 +166,8 @@ def risk_agent_node(state: EVORAAgentState) -> Dict[str, Any]:
             "execution_status": "partial",
             "step_durations": durations,
             "agent_statuses": agent_statuses,
+            "models_used": models_used,
+            "execution_modes": execution_modes,
         }
 
 
@@ -169,6 +185,8 @@ def decision_agent_node(state: EVORAAgentState) -> Dict[str, Any]:
     errors = list(state.get("errors", []))
     durations = dict(state.get("step_durations", {}))
     agent_statuses = dict(state.get("agent_statuses", {}))
+    models_used = dict(state.get("models_used", {}))
+    execution_modes = dict(state.get("execution_modes", {}))
 
     try:
         agent = DecisionOptimizationAgent()
@@ -180,13 +198,17 @@ def decision_agent_node(state: EVORAAgentState) -> Dict[str, Any]:
             user_query=user_query,
         )
         durations["decision_agent"] = round(time.perf_counter() - start_time, 4)
-        agent_statuses["decision_agent"] = "completed"
+        models_used["decision_agent"] = output.model_used or agent.gemini_model
+        execution_modes["decision_agent"] = output.execution_mode
+        agent_statuses["decision_agent"] = "completed" if output.execution_mode == "llm" else "fallback"
         return {
             "decision_results": output.model_dump(),
             "current_step": "decision_agent",
             "execution_status": "running",
             "step_durations": durations,
             "agent_statuses": agent_statuses,
+            "models_used": models_used,
+            "execution_modes": execution_modes,
         }
     except Exception as e:
         logger.exception("Decision agent failed")
@@ -199,6 +221,8 @@ def decision_agent_node(state: EVORAAgentState) -> Dict[str, Any]:
             "execution_status": "partial",
             "step_durations": durations,
             "agent_statuses": agent_statuses,
+            "models_used": models_used,
+            "execution_modes": execution_modes,
         }
 
 
@@ -209,6 +233,8 @@ def final_report_node(state: EVORAAgentState) -> Dict[str, Any]:
     status = state.get("execution_status", "completed")
     durations = dict(state.get("step_durations", {}))
     agent_statuses = dict(state.get("agent_statuses", {}))
+    models_used = dict(state.get("models_used", {}))
+    execution_modes = dict(state.get("execution_modes", {}))
 
     if status == "failed":
         final_report = {
@@ -280,6 +306,8 @@ def final_report_node(state: EVORAAgentState) -> Dict[str, Any]:
             "All final decisions, financial commitments, and operational changes "
             "require human verification and approval."
         ),
+        "models_used": models_used,
+        "execution_modes": execution_modes,
     }
 
     final_status = "partial" if errors else "completed"
@@ -292,4 +320,6 @@ def final_report_node(state: EVORAAgentState) -> Dict[str, Any]:
         "execution_status": final_status,
         "step_durations": durations,
         "agent_statuses": agent_statuses,
+        "models_used": models_used,
+        "execution_modes": execution_modes,
     }

@@ -1538,6 +1538,8 @@ def run_agents_workflow(
         "errors": errors,
         "step_durations": workflow_output.get("step_durations", {}),
         "agent_statuses": workflow_output.get("agent_statuses", {}),
+        "models_used": workflow_output.get("models_used", {}),
+        "execution_modes": workflow_output.get("execution_modes", {}),
         "analytics": make_json_safe(workflow_output.get("analytics_results")),
         "risk": make_json_safe(workflow_output.get("risk_results")),
         "decision": make_json_safe(workflow_output.get("decision_results")),

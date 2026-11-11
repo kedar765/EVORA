@@ -57,6 +57,10 @@ class AnalyticsAgentOutput(EVORABaseSchema):
     row_count: int = 0
     summary: str = ""
 
+    model_used: Optional[str] = None
+    execution_mode: Literal["llm", "groq_fallback", "deterministic_fallback"] = "llm"
+    model_error: Optional[str] = None
+
     @field_validator("total_revenue", "total_expenses", "total_profit", "profit_margin", mode="before")
     @classmethod
     def check_finite(cls, v: Any) -> Optional[float]:
@@ -84,6 +88,10 @@ class RiskAgentOutput(EVORABaseSchema):
     evidence: List[EvidenceItem] = Field(default_factory=list)
 
     summary: str = ""
+
+    model_used: Optional[str] = None
+    execution_mode: Literal["llm", "groq_fallback", "deterministic_fallback"] = "llm"
+    model_error: Optional[str] = None
 
     @field_validator("risk_score", mode="before")
     @classmethod
@@ -136,6 +144,10 @@ class DecisionAgentOutput(EVORABaseSchema):
     human_approval_required: bool = True
     summary: str = ""
 
+    model_used: Optional[str] = None
+    execution_mode: Literal["llm", "groq_fallback", "deterministic_fallback"] = "llm"
+    model_error: Optional[str] = None
+
 
 # Final Synthesized Executive Business Report
 class FinalReportOutput(EVORABaseSchema):
@@ -151,6 +163,9 @@ class FinalReportOutput(EVORABaseSchema):
         "EVORA provides decision-support evidence. "
         "The final business decision and execution remain under human control."
     )
+
+    models_used: Dict[str, str] = Field(default_factory=dict)
+    execution_modes: Dict[str, str] = Field(default_factory=dict)
 
 
 # Agent Workflow Input
@@ -174,5 +189,7 @@ class AgentWorkflowResponse(EVORABaseSchema):
     errors: List[str] = Field(default_factory=list)
     step_durations: Dict[str, float] = Field(default_factory=dict)
     agent_statuses: Dict[str, str] = Field(default_factory=dict)
+    models_used: Dict[str, str] = Field(default_factory=dict)
+    execution_modes: Dict[str, str] = Field(default_factory=dict)
     analysis_id: Optional[str] = None
     created_at: Optional[int] = None

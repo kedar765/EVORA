@@ -32,6 +32,8 @@ class EVORAAgentState(TypedDict, total=False):
     execution_status: Literal["pending", "running", "completed", "partial", "failed"]
     step_durations: Dict[str, float]
     agent_statuses: Dict[str, str]
+    models_used: Dict[str, str]
+    execution_modes: Dict[str, str]
 
     # Final synthesized executive report
     final_report: Optional[Dict[str, Any]]
