@@ -216,13 +216,14 @@ class AnalyticsAgent:
             ],
             "recent_monthly_performance": [
                 {
-                    "month": t["month"],
-                    "revenue": t["revenue"],
-                    "profit": t["profit"],
+                    "month": t.get("month") or t.get("period", "unknown"),
+                    "revenue": t.get("revenue", 0.0),
+                    "profit": t.get("profit", 0.0),
                 }
                 for t in recent_trends
             ],
         }
+
 
         # MoM comparison indicator if monthly data exists
         if len(trends) >= 2:
@@ -565,3 +566,137 @@ class AnalyticsAgent:
             "product_performance": metrics["product_performance"],
             "monthly_trends": metrics["monthly_trends"],
         }
+
+    # -------------------------------------------------------------------------
+    # 9. Multi-Agent Workflow Interface (LangChain Tool-Calling Agent)
+    # -------------------------------------------------------------------------
+
+    def run_agent(
+        self,
+        dataset_id: str,
+        user_id: str,
+        user_query: str = "",
+    ) -> "AnalyticsAgentOutput":
+        """
+        Executes genuine LangChain tool-backed analytics for the multi-agent workflow.
+        Returns validated AnalyticsAgentOutput schema.
+        """
+        from schemas.agent_schemas import AnalyticsAgentOutput, EvidenceItem
+        from tools.analytics_tools import (
+            calculate_business_metrics,
+            analyze_product_performance,
+            analyze_time_trends,
+            compare_business_segments,
+        )
+        from tools.dataset_tools import load_user_dataset
+
+        df, meta = load_user_dataset(dataset_id, user_id)
+
+        # 1. Execute deterministic tools
+        metrics_json = calculate_business_metrics.invoke({"dataset_id": dataset_id, "user_id": user_id})
+        metrics = json.loads(metrics_json)
+
+        products_json = analyze_product_performance.invoke({"dataset_id": dataset_id, "user_id": user_id, "top_n": 5})
+        products_res = json.loads(products_json)
+
+        trends_json = analyze_time_trends.invoke({"dataset_id": dataset_id, "user_id": user_id, "period": "monthly"})
+        trends_res = json.loads(trends_json)
+
+        segments_json = compare_business_segments.invoke({"dataset_id": dataset_id, "user_id": user_id, "segment_column": "auto"})
+        segments_res = json.loads(segments_json)
+
+        # 2. Extract core financial figures
+        total_revenue = metrics.get("total_revenue", 0.0)
+        total_expenses = metrics.get("total_expenses", 0.0)
+        total_profit = metrics.get("total_profit", 0.0)
+        profit_margin = metrics.get("profit_margin_pct", 0.0)
+
+        # 3. Assemble evidence
+        evidence: List[EvidenceItem] = [
+            EvidenceItem(
+                description=f"Total gross revenue calculated from {len(df)} records.",
+                metric="total_revenue",
+                value=total_revenue,
+                source="calculate_business_metrics",
+            ),
+            EvidenceItem(
+                description="Total operational and product expenses.",
+                metric="total_expenses",
+                value=total_expenses,
+                source="calculate_business_metrics",
+            ),
+            EvidenceItem(
+                description="Net total business profit.",
+                metric="total_profit",
+                value=total_profit,
+                source="calculate_business_metrics",
+            ),
+            EvidenceItem(
+                description="Operating profit margin percentage.",
+                metric="profit_margin",
+                value=f"{profit_margin:.2f}%",
+                source="calculate_business_metrics",
+            ),
+        ]
+
+        # 4. Generate insights using LLM cascade or rule-based engine
+        summary_payload = self._generate_compact_summary(df, {
+            "total_revenue": total_revenue,
+            "total_expense": total_expenses,
+            "total_profit": total_profit,
+            "profit_margin": profit_margin,
+            "row_count": len(df),
+            "product_performance": products_res.get("top_profitable_products", []),
+            "monthly_trends": trends_res.get("trends", []),
+        })
+
+        if user_query:
+            summary_payload["user_question"] = user_query
+
+        insights, recommendations, _ = self._generate_insights(summary_payload, {
+            "total_revenue": total_revenue,
+            "total_expense": total_expenses,
+            "total_profit": total_profit,
+            "profit_margin": profit_margin,
+            "product_performance": products_res.get("top_profitable_products", []),
+            "monthly_trends": trends_res.get("trends", []),
+        })
+
+        if segments_res.get("available") and segments_res.get("top_segment"):
+            top_seg = segments_res["top_segment"]
+            evidence.append(
+                EvidenceItem(
+                    description=f"Top segment by profit: {top_seg.get('segment')}",
+                    metric="top_segment_profit",
+                    value=top_seg.get("profit"),
+                    source="compare_business_segments",
+                )
+            )
+
+        summary_text = (
+            f"Business recorded ₹{total_revenue:,.2f} in revenue and ₹{total_expenses:,.2f} in expenses, "
+            f"yielding a net profit of ₹{total_profit:,.2f} (profit margin: {profit_margin:.2f}%)."
+        )
+
+        return AnalyticsAgentOutput(
+            total_revenue=total_revenue,
+            total_expenses=total_expenses,
+            total_profit=total_profit,
+            profit_margin=profit_margin,
+            key_findings=insights,
+            recommendations=recommendations,
+            evidence=evidence,
+            product_performance=products_res.get("top_profitable_products", []),
+            monthly_trends=trends_res.get("trends", []),
+            row_count=len(df),
+            summary=summary_text,
+        )
+
+
+def create_analytics_agent(
+    gemini_api_key: Optional[str] = None,
+    groq_api_key: Optional[str] = None,
+) -> AnalyticsAgent:
+    """Factory creating an AnalyticsAgent instance."""
+    return AnalyticsAgent(gemini_api_key=gemini_api_key, groq_api_key=groq_api_key)
+

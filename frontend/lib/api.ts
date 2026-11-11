@@ -199,4 +199,97 @@ export const api = {
       method: "GET",
     });
   },
+
+  runAgentWorkflow: async (
+    data: { dataset_id: string; user_query?: string }
+  ): Promise<AgentWorkflowResponse> => {
+    return request<AgentWorkflowResponse>("/agents/run", {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+  },
 };
+
+export interface AgentWorkflowResponse {
+  success: boolean;
+  dataset_id: string;
+  user_query: string;
+  status: "completed" | "partial" | "failed";
+  errors: string[];
+  analytics?: {
+    total_revenue?: number;
+    total_expenses?: number;
+    total_profit?: number;
+    profit_margin?: number;
+    key_findings?: string[];
+    recommendations?: string[];
+    product_performance?: Array<{
+      product: string;
+      revenue: number;
+      expense: number;
+      profit: number;
+      profit_margin_pct?: number;
+    }>;
+    monthly_trends?: Array<{
+      period?: string;
+      month?: string;
+      revenue: number;
+      expense: number;
+      profit: number;
+    }>;
+    summary?: string;
+  };
+  risk?: {
+    risk_score: number;
+    risk_level: "low" | "medium" | "high" | "critical";
+    anomaly_detected: boolean;
+    anomaly_count?: number;
+    predicted_profit?: number;
+    key_risks?: string[];
+    findings?: Array<{
+      risk_type: string;
+      severity: string;
+      description: string;
+      recommended_action?: string;
+    }>;
+    summary?: string;
+  };
+  decision?: {
+    overall_priority: "low" | "medium" | "high" | "critical";
+    recommended_strategy: string;
+    alternative_strategies?: string[];
+    actions?: Array<{
+      action: string;
+      priority: string;
+      expected_impact?: string;
+      reason: string;
+      risk?: string;
+    }>;
+    scenarios?: Array<{
+      scenario_name: string;
+      projected_revenue: number;
+      projected_expenses: number;
+      projected_profit: number;
+      profit_delta: number;
+    }>;
+    human_approval_required: boolean;
+    summary?: string;
+  };
+  final_report?: {
+    executive_summary: string;
+    business_health_status: string;
+    overall_risk_level: string;
+    risk_score: number;
+    financial_highlights?: Record<string, number>;
+    key_insights?: string[];
+    immediate_actions?: Array<{
+      action: string;
+      priority: string;
+      reason: string;
+    }>;
+    governance_disclaimer: string;
+  };
+  analysis_id?: string;
+  created_at?: number;
+}
+

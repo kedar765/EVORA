@@ -24,7 +24,9 @@ export interface UploadResult {
   risk_analysis?: RiskAnalysisData;
   analytics?: AnalyticsData;
   business_status?: string;
+  dataset_id?: string;
 }
+
 
 export interface AnalyticsData {
   total_revenue: number;

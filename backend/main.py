@@ -42,6 +42,8 @@ from backend.auth import (
 )
 from backend.features import prepare_features
 from ml.forecast import DailyProfitForecaster
+from schemas.agent_schemas import AgentWorkflowRequest, AgentWorkflowResponse
+from workflows.graph import run_evora_workflow
 
 
 app = FastAPI(
@@ -1438,3 +1440,83 @@ async def post_next_day_forecast(
         "success": True,
         "prediction": response,
     }
+
+
+# ---------------------------------------
+# Multi-Agent Workflow Orchestration
+# ---------------------------------------
+
+@app.post("/agents/run")
+def run_agents_workflow(
+    data: AgentWorkflowRequest,
+    user: dict = Depends(get_current_user),
+):
+    """
+    Executes the complete EVORA LangGraph Multi-Agent Workflow:
+    Dataset Validation -> Analytics Agent -> Risk Agent -> Decision Optimization Agent -> Final Report.
+    """
+    user_id = user["id"]
+    dataset_id = str(data.dataset_id).strip()
+
+    if not dataset_id:
+        raise HTTPException(
+            status_code=400,
+            detail="dataset_id is required.",
+        )
+
+    # Verify dataset exists and is owned by the user
+    with database() as connection:
+        owned_dataset = connection.execute(
+            "SELECT id, original_filename FROM datasets WHERE id = ? AND user_id = ?",
+            (dataset_id, user_id),
+        ).fetchone()
+
+        if owned_dataset is None:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Dataset '{dataset_id}' not found or access unauthorized.",
+            )
+
+    try:
+        workflow_output = run_evora_workflow(
+            dataset_id=dataset_id,
+            user_id=user_id,
+            user_query=data.user_query or "",
+        )
+    except Exception as exc:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Workflow execution failed: {str(exc)}",
+        ) from exc
+
+    status = workflow_output.get("execution_status", "completed")
+    errors = workflow_output.get("errors", [])
+
+    response_payload = {
+        "success": status in {"completed", "partial"},
+        "dataset_id": dataset_id,
+        "user_query": data.user_query or "",
+        "status": status,
+        "errors": errors,
+        "analytics": make_json_safe(workflow_output.get("analytics_results")),
+        "risk": make_json_safe(workflow_output.get("risk_results")),
+        "decision": make_json_safe(workflow_output.get("decision_results")),
+        "final_report": make_json_safe(workflow_output.get("final_report")),
+    }
+
+    # Persist in analysis history
+    analysis_id, created_at = save_analysis_history(
+        user_id=user_id,
+        dataset_id=dataset_id,
+        analysis_type="multi_agent_workflow",
+        input_summary={
+            "dataset_id": dataset_id,
+            "filename": owned_dataset["original_filename"],
+            "user_query": data.user_query or "",
+        },
+        result=response_payload,
+    )
+    response_payload["analysis_id"] = analysis_id
+    response_payload["created_at"] = created_at
+
+    return response_payload

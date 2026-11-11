@@ -1,7 +1,7 @@
 [project]
 name = "backend"
 version = "0.1.0"
-description = "Add your description here"
+description = "EVORA Multi-Agent AI Business Intelligence & Decision Optimization System"
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
@@ -11,4 +11,10 @@ dependencies = [
     "python-multipart>=0.0.32",
     "scikit-learn>=1.9.0",
     "uvicorn>=0.52.4",
+    "langchain>=0.3.0",
+    "langgraph>=0.2.0",
+    "langchain-google-genai>=4.4.0",
+    "langchain-groq>=1.1.0",
+    "python-dotenv>=1.0.0",
+    "pytest>=8.0.0",
 ]

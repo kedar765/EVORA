@@ -19,6 +19,7 @@ import AIInsights from "@/components/dashboard/AIInsights";
 import RiskDetailsCard from "@/components/dashboard/RiskDetailsCard";
 import WhatIfAnalysis from "@/components/dashboard/WhatIfAnalysis";
 import CsvUpload from "@/components/dashboard/CsvUpload";
+import MultiAgentWorkflow from "@/components/dashboard/MultiAgentWorkflow";
 
 export default function DashboardPage() {
   const {
@@ -178,6 +179,15 @@ export default function DashboardPage() {
       {/* Business Metrics */}
       <section aria-label="Financial performance">
         <OverviewCards uploadResult={uploadResult} />
+      </section>
+
+      {/* Multi-Agent AI Business Intelligence & Decision Optimization */}
+      <section aria-label="Multi-Agent AI Decision System">
+        <MultiAgentWorkflow
+          datasetId={uploadResult?.dataset_id}
+          filename={uploadResult?.filename}
+          hasData={hasData}
+        />
       </section>
 
       {/* Revenue vs Expense */}

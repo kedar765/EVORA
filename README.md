@@ -80,16 +80,16 @@ In EVORA, machine learning models and analytical routines are **underlying capab
 | **Business Metrics Engine** | ✅ **Implemented** | Total/Average Revenue, Expense, Profit, Profit Margin calculation |
 | **Profit Prediction** | ✅ **Implemented** | Random Forest Regressor trained on unit metrics (`ml/profit_model.pkl`) |
 | **Anomaly Detection** | ✅ **Implemented** | Isolation Forest model for unusual pattern detection (`ml/anomaly_model.pkl`) |
+| **Daily Profit Forecasting** | ✅ **Implemented** | Linear Regression daily time-series forecast model (`ml/daily_profit_forecast_model.pkl`) |
 | **Risk Analysis Engine** | ✅ **Implemented** | Multi-factor risk scoring (0-100) & risk tiering (LOW, MEDIUM, HIGH) |
 | **What-If Scenario Simulation** | ✅ **Implemented** | Dual-scenario simulation comparing baseline vs target operational shifts |
-| **Analytics Agent** | ✅ **Implemented** | Generates synthesized natural language business insights (`agents/analytics_agent.py`) |
-| **Risk Agent** | ✅ **Implemented** | Diagnostic reasoning explaining detected risks and anomalies (`agents/risk_agent.py`) |
-| **User Authentication** | ✅ **Implemented** | Session persistence supporting Email/Password, Google OAuth, and GitHub OAuth |
-| **Decision Optimization Agent** | 🏗️ **Prepared** | Reasoning architecture in `agents/decision_agent.py` awaiting graph orchestration |
-| **LangGraph Multi-Agent Flow** | 🔮 *Planned / Future* | Dynamic agent graph orchestration across complex multi-step reasoning |
+| **Analytics Agent** | ✅ **Implemented** | LangChain agent with 7 analytics tools & backward-compatible `analyze(df)` (`agents/analytics_agent.py`) |
+| **Risk Agent** | ✅ **Implemented** | LangChain agent with 7 risk tools & backward-compatible `analyze(...)` (`agents/risk_agent.py`) |
+| **Decision Optimization Agent** | ✅ **Implemented** | LangChain agent with 6 decision tools & backward-compatible `recommend(...)` (`agents/decision_agent.py`) |
+| **LangGraph Multi-Agent Flow** | ✅ **Implemented** | Cyclical state graph orchestrating validation, analytics, risk, decision optimization, and report synthesis (`workflows/graph.py`) |
+| **Persistent Database Layer** | ✅ **Implemented** | SQLite database with user auth, session tokens, dataset ownership registry, and analysis history logs |
 | **RAG / Knowledge Retrieval** | 🔮 *Planned / Future* | Sentence Transformers + FAISS business document knowledge retrieval (`rag/`) |
 | **Excel (.xlsx) Data Upload** | 🔮 *Planned / Future* | Parsing of multi-sheet spreadsheet financial workbooks |
-| **Persistent Database Layer** | 🔮 *Planned / Future* | SQLite / PostgreSQL relational storage for historical audit logs |
 
 ---
 
@@ -106,17 +106,17 @@ flowchart LR
 
 ### 1. 📊 Analytics Agent
 * **Core Question:** *"What happened?"*
-* **Underlying Capabilities:** Business metrics aggregation, profit margin calculations, and trend analysis.
-* **Outputs:** Total revenue, expenses, net profit, profit margin %, and clear synthesized business insights.
+* **Underlying Capabilities:** Business metrics aggregation, profit margin calculations, time trends, segment comparisons, product performance, and correlation analysis.
+* **Outputs:** Total revenue, expenses, net profit, profit margin %, segment breakdowns, and clear synthesized business insights.
 
 ### 2. ⚠️ Risk Agent
 * **Core Question:** *"What is wrong?"*
-* **Underlying Capabilities:** Isolation Forest anomaly detection, Random Forest profit prediction, and rule-based risk scoring.
-* **Outputs:** Risk score (0–100), categorical risk level (LOW, MEDIUM, HIGH), anomaly status, and explainable risk reasons.
+* **Underlying Capabilities:** Isolation Forest anomaly detection, Random Forest profit prediction, revenue drop detection, expense growth analysis, loss pattern identification, and risk scoring (0–100 scale).
+* **Outputs:** Risk score (0–100), categorical risk level (LOW, MEDIUM, HIGH), anomaly status, and structured risk findings.
 
-### 3. 🎯 Decision Optimization Agent *(Architecture Prepared)*
+### 3. 🎯 Decision Optimization Agent
 * **Core Question:** *"What should we do?"*
-* **Underlying Capabilities:** Synthesizes outputs from Analytics Agent, Risk Agent, and What-If scenario simulations.
+* **Underlying Capabilities:** Synthesizes outputs from Analytics Agent and Risk Agent, runs What-If scenario simulations, evaluates strategic options, estimates financial impacts, and formulates prioritized action plans.
 * **Outputs:** Evidence-based recommendation action plan with priority levels, preserving human decision authority.
 
 ---
@@ -175,11 +175,75 @@ The backend is built with FastAPI and runs on `http://127.0.0.1:8000`.
 | Endpoint | Method | Input | Output / Description |
 | :--- | :---: | :--- | :--- |
 | `/health` | `GET` | *None* | Service health status (`{"status": "healthy"}`) |
-| `/upload` | `POST` | `multipart/form-data` (CSV) | Ingests CSV, computes metrics, and runs Random Forest profit prediction |
+| `/auth/signup` | `POST` | JSON: `{email, password, full_name}` | Registers new user account with hashed credentials |
+| `/auth/login` | `POST` | JSON: `{email, password}` | Authenticates user and returns session token |
+| `/auth/me` | `GET` | Header: `Authorization: Bearer <token>` | Returns current authenticated user profile |
+| `/upload` | `POST` | `multipart/form-data` (CSV) | Ingests CSV, registers ownership, computes metrics, and runs Random Forest prediction |
 | `/analytics` | `POST` | `multipart/form-data` (CSV) | Activates Analytics Agent to produce natural language business insights |
-| `/ml/predict-profit` | `POST` | JSON: `{Quantity, Revenue, Expense}` | Predicts profit using the trained Random Forest model |
-| `/analyze-risk` | `POST` | JSON: `{Quantity, Revenue, Expense}` | Evaluates risk score, risk level, anomaly status, and agent reasons |
+| `/analyze-risk` | `POST` | JSON: `{Quantity, Revenue, Expense}` | Evaluates risk score, risk level, anomaly status, and agent findings |
+| `/decision/recommend` | `POST` | JSON: `{metrics, risk_assessment}` | Decision Optimization Agent recommended action plan |
 | `/what-if` | `POST` | JSON: baseline & target values | Compares current vs hypothetical scenario, computing projected profit delta |
+| `/forecast/next-day` | `POST` | `multipart/form-data` (CSV) | Predicts next day's profit using daily time-series linear regression |
+| `/history` | `GET` | Header: `Authorization: Bearer <token>` | Returns user's persistent analysis history logs |
+| `/agents/run` | `POST` | JSON: `{dataset_id, user_query}` | **Orchestrated LangGraph Multi-Agent Workflow** (Analytics → Risk → Decision → Executive Report) |
+
+---
+
+## 🔄 LangGraph Multi-Agent Orchestration & Tool Registry
+
+EVORA's flagship capability is a cyclical, state-managed **LangGraph multi-agent pipeline** that executes genuine LangChain tool-calling agents over authenticated user datasets:
+
+```mermaid
+flowchart TD
+    START([Start]) --> V["Validate Dataset Node"]
+    V -->|Valid| A["Analytics Agent Node<br/>(7 Business Analytics Tools)"]
+    V -->|Invalid / Error| R["Final Report Node<br/>(Executive Synthesis)"]
+    A --> K["Risk Agent Node<br/>(7 Diagnostic Risk Tools)"]
+    K --> D["Decision Optimization Agent Node<br/>(6 Strategic Decision Tools)"]
+    D --> R
+    R --> END([Complete / Persistent History])
+
+    classDef node fill:#6C5CE7,stroke:#4834A6,color:#fff
+    classDef err fill:#E17055,stroke:#D63031,color:#fff
+    class V,A,K,D,R node
+```
+
+### The 20 Specialized Agent Tools
+
+The system provides 20 robust tools implemented across four specialized modules:
+
+#### 1. Centralized Safe Dataset Access Layer (`tools/dataset_tools.py`)
+- `load_user_dataset`: Safe CSV loading with path traversal prevention, ownership enforcement, and memory caching.
+- `resolve_safe_dataset_path`: Resolves and validates absolute filesystem paths within authorized storage boundaries.
+- `identify_semantic_columns`: Robust regex and heuristic mapping for revenue, expense, quantity, date, product, category, and region columns.
+- `sanitize_dataframe`: Cleans numerical strings, removes currency symbols, converts dates, and handles nulls gracefully.
+- `get_upload_storage_dir`: Resolves active upload storage directory from configuration or environment.
+
+#### 2. Business Analytics Tools (`tools/analytics_tools.py`)
+- `get_dataset_profile`: Returns row count, date spans, available dimensions, and detected column mappings.
+- `calculate_business_metrics`: Computes total/average revenue, expense, net profit, margin %, and units sold.
+- `analyze_time_trends`: Computes monthly or periodic revenue, expense, and profit trajectories.
+- `compare_business_segments`: Aggregates and ranks performance by product category or geographic region.
+- `analyze_product_performance`: Identifies top revenue generators, most profitable products, and loss-making items.
+- `query_business_data`: Filters rows based on column conditions for deep-dive inspection.
+- `analyze_relationships`: Evaluates correlation between quantity, expense, and profitability.
+
+#### 3. Diagnostic Risk Tools (`tools/risk_tools.py`)
+- `detect_anomalies`: Runs Isolation Forest (`ml/anomaly_model.pkl`) to flag statistical outliers in unit economics.
+- `analyze_revenue_drops`: Identifies significant revenue decelerations across consecutive periods.
+- `analyze_expense_growth`: Surfaces periods where expense growth outpaced revenue expansion.
+- `identify_loss_patterns`: Isolates transactions, products, or segments operating at negative margins.
+- `calculate_risk_score`: Deterministic 0–100 multi-factor risk scoring engine with LOW, MEDIUM, HIGH tiering.
+- `forecast_business_risks`: Combines ML predictions with margin compression thresholds to forecast near-term risk.
+- `explain_risk_records`: Provides detailed record-level explanations for why specific rows were flagged.
+
+#### 4. Strategic Decision Tools (`tools/decision_tools.py`)
+- `simulate_business_scenario`: Evaluates hypothetical adjustments in volume, pricing, and cost structures.
+- `compare_business_strategies`: Side-by-side evaluation of aggressive growth vs margin defense vs cost reduction.
+- `estimate_financial_impact`: Projects expected net profit change and timeline from specific strategic interventions.
+- `optimize_resource_allocation`: Recommends optimal budget shifts from low-margin to high-margin operations.
+- `generate_action_plan`: Constructs phased, prioritized action items categorized by urgency and impact.
+- `evaluate_decision_options`: Multi-criteria decision matrix scoring across ROI, execution risk, and time-to-value.
 
 ---
 
@@ -192,6 +256,7 @@ flowchart TB
     subgraph Presentation ["Presentation Layer"]
         FE --> CU["CsvUpload.tsx"]
         FE --> OC["OverviewCards.tsx"]
+        FE --> MW["MultiAgentWorkflow.tsx"]
         FE --> AA["AnalyticsAgent.tsx"]
         FE --> RA["RiskAgent.tsx"]
         FE --> WI["WhatIfAnalysis.tsx"]
@@ -200,12 +265,18 @@ flowchart TB
     subgraph Backend ["FastAPI Backend (Port 8000)"]
         API["FastAPI Routing Engine"]
         FE --> API
-        API --> VAL["Data Validation & Features (features.py)"]
+        API --> AUTH["SQLite Auth & Session Manager"]
+        API --> VAL["Data Validation & Safe Storage"]
         API --> ML_RF["Random Forest Regressor (profit_model.pkl)"]
         API --> ML_IF["Isolation Forest (anomaly_model.pkl)"]
-        API --> AG_AN["AnalyticsAgent (agents/analytics_agent.py)"]
-        API --> AG_RK["RiskAgent (agents/risk_agent.py)"]
-        API --> AG_DO["DecisionOptimizationAgent (agents/decision_agent.py)"]
+        API --> ML_FC["Daily Profit Forecaster (daily_profit_forecast_model.pkl)"]
+        API --> LG["LangGraph Multi-Agent Workflow (workflows/graph.py)"]
+        LG --> AG_AN["AnalyticsAgent (agents/analytics_agent.py)"]
+        LG --> AG_RK["RiskAgent (agents/risk_agent.py)"]
+        LG --> AG_DO["DecisionOptimizationAgent (agents/decision_agent.py)"]
+        AG_AN --> TOOLS_AN["Analytics Tools (7 tools)"]
+        AG_RK --> TOOLS_RK["Risk Tools (7 tools)"]
+        AG_DO --> TOOLS_DO["Decision Tools (6 tools)"]
     end
 
     classDef user fill:#2E86DE,stroke:#1B4F91,color:#fff
@@ -213,26 +284,30 @@ flowchart TB
     classDef be fill:#00B894,stroke:#00795A,color:#fff
     classDef ml fill:#6C5CE7,stroke:#4834A6,color:#fff
     classDef ag fill:#8E44AD,stroke:#5B2C6F,color:#fff
+    classDef tool fill:#2D3436,stroke:#636E72,color:#fff
 
     class USER user
-    class FE,CU,OC,AA,RA,WI fe
-    class API,VAL be
-    class ML_RF,ML_IF ml
+    class FE,CU,OC,MW,AA,RA,WI fe
+    class API,AUTH,VAL,LG be
+    class ML_RF,ML_IF,ML_FC ml
     class AG_AN,AG_RK,AG_DO ag
+    class TOOLS_AN,TOOLS_RK,TOOLS_DO tool
 ```
 
 ---
 
 ## 🛠️ Technology Stack
 
-| Category | Implemented Technologies | Planned / Future Additions |
-| :--- | :--- | :--- |
-| **Frontend** | Next.js 16 (App Router), React 19, TypeScript, Tailwind CSS, Lucide Icons | Charting library expansion |
-| **Backend** | FastAPI, Uvicorn, Python 3.11+, Pydantic | PostgreSQL / SQLite persistence |
-| **Data & Feature Engineering** | Pandas, NumPy | Automated schema inference |
-| **Machine Learning** | Scikit-Learn (`RandomForestRegressor`, `IsolationForest`), Joblib | Model registry & auto-retraining |
-| **AI Agents** | Native Reasoning Agents (`AnalyticsAgent`, `RiskAgent`, `DecisionOptimizationAgent`) | LangGraph dynamic graph orchestration |
-| **Auth & Security** | Next.js Client Auth Context, Google/GitHub OAuth session flows, CORS Middleware | JWT / OAuth2 backend validation |
+| Category | Implemented Technologies |
+| :--- | :--- |
+| **Frontend** | Next.js 16 (App Router), React 19, TypeScript, Tailwind CSS, Lucide Icons |
+| **Backend** | FastAPI, Uvicorn, Python 3.11+, Pydantic v2 |
+| **Multi-Agent Orchestration** | LangGraph (StateGraph), LangChain (`create_tool_calling_agent`, `AgentExecutor`) |
+| **LLM Tiering** | Gemini Flash → Groq → Deterministic Offline Fallback (`EVORA_SKIP_EXTERNAL_LLM=1`) |
+| **Database & Persistence** | SQLite database with user auth, session tokens, dataset ownership registry, and analysis history logs |
+| **Data & Feature Engineering** | Pandas, NumPy, robust semantic column detection, sanitization layer |
+| **Machine Learning** | Scikit-Learn (`RandomForestRegressor`, `IsolationForest`, `LinearRegression`), Joblib |
+| **Auth & Security** | Next.js Client Auth Context, Google/GitHub OAuth flows, PBKDF2 password hashing, Path traversal guards |
 
 ---
 
@@ -241,14 +316,12 @@ flowchart TB
 ```text
 EVORA/
 ├── agents/                           # Multi-Agent Reasoning Layer
-│   ├── analytics_agent.py            # Analytics Agent ("What happened?")
-│   ├── risk_agent.py                 # Risk Agent ("What is wrong?")
-│   ├── decision_agent.py             # Decision Optimization Agent ("What should we do?")
-│   └── test_analytics_agent.py       # Agent test script
+│   ├── analytics_agent.py            # Analytics Agent ("What happened?" + 7 tools)
+│   ├── risk_agent.py                 # Risk Agent ("What is wrong?" + 7 tools)
+│   └── decision_agent.py             # Decision Optimization Agent ("What should we do?" + 6 tools)
 ├── backend/                          # FastAPI Backend
 │   ├── main.py                       # REST API endpoints & CORS configuration
 │   ├── features.py                   # Feature engineering pipeline
-│   ├── test_features.py              # Feature engineering test
 │   ├── requirements.txt              # Backend dependencies
 │   └── pyproject.toml                # Project packaging metadata
 ├── data/                             # Datasets
@@ -256,11 +329,12 @@ EVORA/
 │   └── sample_business_data.csv      # Sample financial data
 ├── frontend/                         # Next.js App Router Frontend
 │   ├── app/
-│   │   ├── dashboard/page.tsx        # Modular, agent-centric dashboard (<150 lines)
+│   │   ├── dashboard/page.tsx        # Modular dashboard with MultiAgentWorkflow tab
 │   │   ├── login/                    # Login interface (Email, Google, GitHub)
 │   │   └── layout.tsx                # App root layout with AuthProvider
 │   ├── components/
 │   │   ├── dashboard/
+│   │   │   ├── MultiAgentWorkflow.tsx# Coordinated Multi-Agent Workflow UI component
 │   │   │   ├── CsvUpload.tsx         # CSV ingestion & status component
 │   │   │   ├── OverviewCards.tsx     # KPI metrics & ML prediction banner
 │   │   │   ├── AnalyticsAgent.tsx    # Analytics Agent reasoning card
@@ -269,19 +343,34 @@ EVORA/
 │   │   │   └── types.ts              # Shared TypeScript interfaces
 │   │   └── OAuthButtons.tsx          # Google & GitHub OAuth buttons
 │   └── lib/
-│       ├── api.ts                    # Backend API client
+│       ├── api.ts                    # Backend API client including runAgentWorkflow
 │       └── auth.ts                   # Authentication context & session store
 ├── ml/                               # Machine Learning Core
 │   ├── profit_model.pkl              # Trained Random Forest Regressor
 │   ├── anomaly_model.pkl             # Trained Isolation Forest Model
+│   ├── daily_profit_forecast_model.pkl # Trained Linear Regression Forecaster
 │   ├── train_model.py                # Profit model training script
-│   ├── train_anomaly_model.py        # Anomaly model training script
-│   └── generate_anomaly_data.py      # Synthetic anomaly data generator
-├── tests/                            # Automated Evaluation Suite
+│   └── train_anomaly_model.py        # Anomaly model training script
+├── schemas/                          # Pydantic Output Schemas
+│   └── agent_schemas.py              # Strict Pydantic models for agent findings & reports
+├── tools/                            # Specialized Tool Layer (20 Tools)
+│   ├── dataset_tools.py              # Safe dataset loading & semantic column identification
+│   ├── analytics_tools.py            # Business metrics, trends, segments & query tools
+│   ├── risk_tools.py                 # Anomaly, drops, loss patterns & risk scoring tools
+│   └── decision_tools.py             # Scenario simulations, strategy comparison & action planning
+├── workflows/                        # LangGraph Multi-Agent Orchestration
+│   ├── state.py                      # EVORAAgentState TypedDict definition
+│   ├── nodes.py                      # Validation, Analytics, Risk, Decision & Report nodes
+│   └── graph.py                      # StateGraph compilation & conditional routing
+├── tests/                            # Automated Evaluation & Test Suite
+│   ├── test_tools.py                 # 25 Unit tests for all agent tools
+│   ├── test_agent_workflow.py        # 4 Integration tests for LangGraph state graph
+│   ├── test_agents_api.py            # 5 End-to-end API tests for POST /agents/run
 │   ├── test_agents_evaluation.py     # Evaluation across 7 business risk scenarios
-│   └── test_decision_agent.py        # Decision Optimization Agent tests
-├── rag/                              # [Planned] Knowledge retrieval directory
-└── README.md                         # Documentation
+│   ├── test_decision_agent.py        # Legacy Decision Optimization Agent tests
+│   ├── test_upload_pipeline.py       # CSV upload & ownership tests
+│   └── test_forecast_ml.py           # 14 tests for daily forecasting ML pipeline
+└── README.md                         # Project documentation
 ```
 
 ---
@@ -307,19 +396,23 @@ Current Profit: ₹11,790               Target Profit: ₹17,350
 
 ## 🧪 Evaluation & Verification
 
-The agent suite is validated using automated test suites covering:
-* **Normal Business:** Positive profit with healthy profit margin ($\ge 20\%$)
-* **Low Risk:** High margins, predictable patterns, risk score $\le 30$
-* **Medium Risk:** Moderate margins ($10-20\%$), risk score $31-60$
-* **High Risk:** Extreme expense exceeding revenue, risk score $> 60$
-* **Anomaly Detected:** Statistical outlier values triggering Isolation Forest
-* **Negative Profit:** Revenue $<$ Expense producing loss warnings
-* **Positive Profit:** Revenue $>$ Expense confirming profitable operations
+The system is rigorously validated through automated unit, integration, and regression suites:
 
-To run the verification suite:
+### 1. Multi-Agent System & Tools Test Suite (34 Tests)
 ```bash
-python tests/test_agents_evaluation.py
-python tests/test_decision_agent.py
+# Run the complete multi-agent test suite (Tools, LangGraph Workflow, and API):
+python -m unittest tests/test_tools.py tests/test_agent_workflow.py tests/test_agents_api.py
+```
+- `tests/test_tools.py` (25/25 passed): Validates all 20 tools across profile, metrics, trends, segments, anomalies, drops, expenses, risk scoring, scenario simulation, strategy comparison, and safe dataset path security.
+- `tests/test_agent_workflow.py` (4/4 passed): Validates StateGraph execution, state propagation, error isolation, and deterministic fallback execution.
+- `tests/test_agents_api.py` (5/5 passed): Validates `POST /agents/run` authentication, ownership isolation, valid workflow runs, missing dataset rejection, and analysis history persistence.
+
+### 2. Regression & Machine Learning Test Suites
+```bash
+python -m unittest tests/test_agents_evaluation.py
+python -m unittest tests/test_decision_agent.py
+python -m unittest tests/test_upload_pipeline.py
+python -m unittest tests/test_forecast_ml.py
 ```
 
 ---
