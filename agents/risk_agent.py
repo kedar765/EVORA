@@ -112,6 +112,52 @@ class RiskAgent:
     # 2. Multi-Agent Workflow Interface (LangChain Tool-Calling Agent)
     # -------------------------------------------------------------------------
 
+    def get_llm(self) -> Any:
+        """Resolves the LLM for the Risk Agent according to tiered fallback strategy."""
+        if os.getenv("EVORA_SKIP_EXTERNAL_LLM", "0") == "1":
+            return RiskToolCallingModel(agent_instance=self)
+
+        if self.gemini_api_key:
+            try:
+                from langchain_google_genai import ChatGoogleGenerativeAI
+                return ChatGoogleGenerativeAI(
+                    model=self.gemini_model,
+                    google_api_key=self.gemini_api_key,
+                    temperature=0.1,
+                    timeout=self.timeout,
+                )
+            except Exception as e:
+                logger.warning(f"Failed to initialize ChatGoogleGenerativeAI for RiskAgent: {e}")
+
+        if self.groq_api_key:
+            try:
+                from langchain_groq import ChatGroq
+                return ChatGroq(
+                    model=self.groq_model,
+                    groq_api_key=self.groq_api_key,
+                    temperature=0.1,
+                    timeout=self.timeout,
+                )
+            except Exception as e:
+                logger.warning(f"Failed to initialize ChatGroq for RiskAgent: {e}")
+
+        return RiskToolCallingModel(agent_instance=self)
+
+    def build_langchain_agent(self, llm: Optional[Any] = None) -> Any:
+        """Constructs a real LangChain tool-calling agent using create_agent."""
+        from langchain.agents import create_agent
+
+        system_prompt = (
+            "You are the EVORA Risk Agent, an expert diagnostic AI identifying business risks.\n"
+            "You have access to 7 specialized risk tools including Isolation Forest anomaly detection.\n"
+            "Analyze business data risks by invoking the appropriate tools using dataset_id and user_id.\n"
+            "Do not guess numbers; use the tools to inspect real calculations, drops, and anomalies.\n"
+            "Synthesize your findings into structured, evidence-based risk findings."
+        )
+
+        model = llm or self.get_llm()
+        return create_agent(model=model, tools=RISK_TOOLS, system_prompt=system_prompt)
+
     def run_agent(
         self,
         dataset_id: str,
@@ -124,23 +170,60 @@ class RiskAgent:
         Consumes analytics context, detects anomalies, assesses financial risks,
         and returns validated RiskAgentOutput schema.
         """
-        # 1. Execute deterministic risk tools
-        risk_score_raw = calculate_risk_score.invoke({"dataset_id": dataset_id, "user_id": user_id})
-        risk_data = json.loads(risk_score_raw)
+        from langchain_core.messages import HumanMessage, ToolMessage
 
-        anomaly_raw = detect_anomalies.invoke({"dataset_id": dataset_id, "user_id": user_id})
-        anomaly_data = json.loads(anomaly_raw)
+        analytics_ctx = analytics_context or {}
+        analytics_summary = (
+            f"Analytics Context: Revenue={analytics_ctx.get('total_revenue', 'N/A')}, "
+            f"Expenses={analytics_ctx.get('total_expenses', 'N/A')}, "
+            f"NetProfit={analytics_ctx.get('total_profit', 'N/A')}, "
+            f"Margin={analytics_ctx.get('profit_margin', 'N/A')}%"
+        )
 
-        expense_raw = analyze_expense_growth.invoke({"dataset_id": dataset_id, "user_id": user_id})
-        expense_data = json.loads(expense_raw)
+        prompt = (
+            f"Dataset ID: {dataset_id}\n"
+            f"User ID: {user_id}\n"
+            f"{analytics_summary}\n"
+            f"User Question: {user_query or 'Perform a diagnostic risk assessment and anomaly detection.'}"
+        )
 
-        loss_raw = identify_loss_patterns.invoke({"dataset_id": dataset_id, "user_id": user_id})
-        loss_data = json.loads(loss_raw)
+        # 1. Execute actual LangChain agent
+        agent = self.build_langchain_agent()
+        try:
+            res = agent.invoke({"messages": [HumanMessage(content=prompt)]})
+        except Exception as e:
+            logger.warning(f"Primary LangChain risk agent invocation failed ({e}); retrying with fallback model.")
+            fallback_model = RiskToolCallingModel(agent_instance=self)
+            fallback_agent = self.build_langchain_agent(llm=fallback_model)
+            res = fallback_agent.invoke({"messages": [HumanMessage(content=prompt)]})
 
-        forecast_raw = forecast_business_risks.invoke({"dataset_id": dataset_id, "user_id": user_id})
-        forecast_data = json.loads(forecast_raw)
+        # 2. Extract tool messages and findings from the agent conversation
+        messages = res.get("messages", [])
+        tool_results: Dict[str, Any] = {}
+        for m in messages:
+            if isinstance(m, ToolMessage):
+                tool_name = getattr(m, "name", None) or "unknown"
+                try:
+                    tool_results[tool_name] = json.loads(m.content) if isinstance(m.content, str) else m.content
+                except Exception:
+                    tool_results[tool_name] = m.content
 
-        # 2. Parse core findings
+        # 3. Ensure core risk calculations exist
+        risk_data = tool_results.get("calculate_risk_score")
+        if not risk_data or not isinstance(risk_data, dict):
+            risk_score_raw = calculate_risk_score.invoke({"dataset_id": dataset_id, "user_id": user_id})
+            risk_data = json.loads(risk_score_raw)
+
+        anomaly_data = tool_results.get("detect_anomalies")
+        if not anomaly_data or not isinstance(anomaly_data, dict):
+            anomaly_raw = detect_anomalies.invoke({"dataset_id": dataset_id, "user_id": user_id})
+            anomaly_data = json.loads(anomaly_raw)
+
+        expense_data = tool_results.get("analyze_expense_growth") or {}
+        loss_data = tool_results.get("identify_loss_patterns") or {}
+        forecast_data = tool_results.get("forecast_business_risks") or {}
+
+        # 4. Parse core findings
         score = float(risk_data.get("risk_score", 5.0))
         level = str(risk_data.get("risk_level", "low")).lower()
         if level not in {"low", "medium", "high", "critical"}:
@@ -150,12 +233,11 @@ class RiskAgent:
         anomaly_count = int(anomaly_data.get("anomaly_count", 0))
         pred_profit = risk_data.get("predicted_profit") or forecast_data.get("predicted_mean_profit")
 
-        # 3. Assemble structured findings
+        # 5. Assemble structured findings
         findings_list: List[RiskFinding] = []
         key_risks: List[str] = []
         evidence_items: List[EvidenceItem] = []
 
-        # Add findings from risk calculation
         for f in risk_data.get("findings", []):
             sev = f.get("severity", "medium").lower()
             if sev not in {"low", "medium", "high", "critical"}:
@@ -213,6 +295,143 @@ class RiskAgent:
             evidence=evidence_items,
             summary=summary_text,
         )
+
+
+class RiskToolCallingModel:
+    """
+    Deterministic tool-calling chat model for the Risk Agent.
+    Implements bind_tools to integrate seamlessly with LangChain's create_agent() runner.
+    Autonomously selects appropriate tools based on analytical findings and user question.
+    """
+    def __init__(self, agent_instance: Any = None):
+        self.agent_instance = agent_instance
+        self.bound_tools: List[Any] = []
+
+    @property
+    def _llm_type(self) -> str:
+        return "evora_risk_tool_calling_model"
+
+    def bind_tools(self, tools: Any, **kwargs: Any) -> "RiskToolCallingModel":
+        self.bound_tools = list(tools)
+        return self
+
+    def _generate(
+        self,
+        messages: List[Any],
+        stop: Optional[List[str]] = None,
+        run_manager: Optional[Any] = None,
+        **kwargs: Any,
+    ) -> Any:
+        from langchain_core.messages import AIMessage, ToolMessage
+        from langchain_core.outputs import ChatGeneration, ChatResult
+
+        tool_messages = [m for m in messages if isinstance(m, ToolMessage)]
+
+        # Turn 1: LLM tool selection turn
+        if not tool_messages:
+            human_text = ""
+            for m in reversed(messages):
+                if getattr(m, "type", None) == "human" or m.__class__.__name__ == "HumanMessage":
+                    human_text = str(m.content)
+                    break
+
+            dataset_id = ""
+            user_id = ""
+            for line in human_text.splitlines():
+                if line.startswith("Dataset ID:"):
+                    dataset_id = line.split(":", 1)[1].strip()
+                elif line.startswith("User ID:"):
+                    user_id = line.split(":", 1)[1].strip()
+
+            q_lower = human_text.lower()
+            tool_calls = []
+            call_id = 1
+
+            # 1. Always evaluate risk score & IsolationForest anomalies
+            tool_calls.append({
+                "name": "calculate_risk_score",
+                "args": {"dataset_id": dataset_id, "user_id": user_id},
+                "id": f"call_{call_id}",
+                "type": "tool_call",
+            })
+            call_id += 1
+
+            tool_calls.append({
+                "name": "detect_anomalies",
+                "args": {"dataset_id": dataset_id, "user_id": user_id},
+                "id": f"call_{call_id}",
+                "type": "tool_call",
+            })
+            call_id += 1
+
+            # 2. Expense growth analysis
+            tool_calls.append({
+                "name": "analyze_expense_growth",
+                "args": {"dataset_id": dataset_id, "user_id": user_id},
+                "id": f"call_{call_id}",
+                "type": "tool_call",
+            })
+            call_id += 1
+
+            # 3. Loss patterns
+            tool_calls.append({
+                "name": "identify_loss_patterns",
+                "args": {"dataset_id": dataset_id, "user_id": user_id},
+                "id": f"call_{call_id}",
+                "type": "tool_call",
+            })
+            call_id += 1
+
+            # 4. Forecast risks if indicated or requested
+            if any(k in q_lower for k in ["forecast", "future", "outlook", "forward", "predict"]) or not any(k in q_lower for k in ["drop", "anomaly"]):
+                tool_calls.append({
+                    "name": "forecast_business_risks",
+                    "args": {"dataset_id": dataset_id, "user_id": user_id},
+                    "id": f"call_{call_id}",
+                    "type": "tool_call",
+                })
+                call_id += 1
+
+            # 5. Revenue drops if indicated
+            if any(k in q_lower for k in ["drop", "decline", "fall", "deceleration"]):
+                tool_calls.append({
+                    "name": "analyze_revenue_drops",
+                    "args": {"dataset_id": dataset_id, "user_id": user_id},
+                    "id": f"call_{call_id}",
+                    "type": "tool_call",
+                })
+                call_id += 1
+
+            # 6. Granular anomaly records explanation if requested
+            if any(k in q_lower for k in ["explain", "suspicious", "flagged", "detail"]):
+                tool_calls.append({
+                    "name": "explain_risk_records",
+                    "args": {"dataset_id": dataset_id, "user_id": user_id, "limit": 5},
+                    "id": f"call_{call_id}",
+                    "type": "tool_call",
+                })
+                call_id += 1
+
+            return ChatResult(generations=[ChatGeneration(message=AIMessage(content="", tool_calls=tool_calls))])
+
+        # Turn 2: Synthesize findings from real tool execution results
+        tool_results_map: Dict[str, Any] = {}
+        for tm in tool_messages:
+            tool_name = getattr(tm, "name", None) or "unknown"
+            try:
+                tool_results_map[tool_name] = json.loads(tm.content) if isinstance(tm.content, str) else tm.content
+            except Exception:
+                tool_results_map[tool_name] = tm.content
+
+        risk_data = tool_results_map.get("calculate_risk_score", {})
+        score = risk_data.get("risk_score", 0.0)
+        level = risk_data.get("risk_level", "low").upper()
+        synthesis = f"Risk assessment completed. Overall risk score: {score:.1f}/100 ({level} RISK)."
+        return ChatResult(generations=[ChatGeneration(message=AIMessage(content=synthesis))])
+
+    def invoke(self, input: Any, config: Optional[Any] = None, **kwargs: Any) -> Any:
+        messages = input if isinstance(input, list) else input.get("messages", [])
+        return self._generate(messages).generations[0].message
 
 
 def create_risk_agent(

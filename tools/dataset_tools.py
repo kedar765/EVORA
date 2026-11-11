@@ -32,8 +32,8 @@ UPLOAD_STORAGE_DIR = (ROOT_DIR / "backend" / "storage" / "uploads").resolve()
 # Semantic column candidate patterns (lowercase, stripped)
 COLUMN_CANDIDATES = {
     "revenue": [
-        "revenue", "sales", "net sales", "total revenue", "gross revenue",
-        "turnover", "income", "amount"
+        "revenue", "sales", "total sales", "net sales", "total revenue",
+        "gross revenue", "gross sales", "turnover", "income", "amount"
     ],
     "expense": [
         "expense", "expenses", "cost", "costs", "total cost", "total expense",
@@ -121,7 +121,6 @@ def resolve_safe_dataset_path(storage_path_str: str) -> Path:
     return resolved_path
 
 
-
 def identify_semantic_columns(columns: List[str]) -> Dict[str, str]:
     """
     Conservatively maps dataset columns to standardized semantic business roles.
@@ -152,9 +151,22 @@ def identify_semantic_columns(columns: List[str]) -> Dict[str, str]:
     return mapping
 
 
+def _clean_numeric_series(series: pd.Series, default: float = 0.0) -> pd.Series:
+    """Cleans numeric series, stripping currency symbols, commas, and whitespace."""
+    if not pd.api.types.is_numeric_dtype(series):
+        s_clean = (
+            series.astype(str)
+            .str.replace(r"[\$,₹,€,£,\s]", "", regex=True)
+            .str.replace(",", "", regex=False)
+        )
+        return pd.to_numeric(s_clean, errors="coerce").fillna(default)
+    return pd.to_numeric(series, errors="coerce").fillna(default)
+
+
 def sanitize_dataframe(df: pd.DataFrame, semantic_mapping: Dict[str, str]) -> pd.DataFrame:
     """
     Sanitizes values, standardizes types, handles missing data, and creates canonical columns.
+    Avoids converting missing values into literal 'nan' strings.
     """
     clean_df = df.copy()
 
@@ -165,32 +177,32 @@ def sanitize_dataframe(df: pd.DataFrame, semantic_mapping: Dict[str, str]) -> pd
 
     # Normalize canonical columns based on semantic mapping
     if "revenue" in semantic_mapping:
-        clean_df["Revenue"] = pd.to_numeric(
-            clean_df[semantic_mapping["revenue"]], errors="coerce"
-        ).fillna(0.0)
+        clean_df["Revenue"] = _clean_numeric_series(
+            clean_df[semantic_mapping["revenue"]], 0.0
+        )
     elif "Revenue" not in clean_df.columns:
         clean_df["Revenue"] = 0.0
 
     if "expense" in semantic_mapping:
-        clean_df["Expense"] = pd.to_numeric(
-            clean_df[semantic_mapping["expense"]], errors="coerce"
-        ).fillna(0.0)
+        clean_df["Expense"] = _clean_numeric_series(
+            clean_df[semantic_mapping["expense"]], 0.0
+        )
     elif "Expense" not in clean_df.columns:
         clean_df["Expense"] = 0.0
 
     # Ensure Profit exists and is consistent
     if "profit" in semantic_mapping and semantic_mapping["profit"] in clean_df.columns:
-        clean_df["Profit"] = pd.to_numeric(
-            clean_df[semantic_mapping["profit"]], errors="coerce"
-        ).fillna(clean_df["Revenue"] - clean_df["Expense"])
+        clean_df["Profit"] = _clean_numeric_series(
+            clean_df[semantic_mapping["profit"]], 0.0
+        )
     else:
         clean_df["Profit"] = clean_df["Revenue"] - clean_df["Expense"]
 
     # Normalize Quantity
     if "quantity" in semantic_mapping:
-        clean_df["Quantity"] = pd.to_numeric(
-            clean_df[semantic_mapping["quantity"]], errors="coerce"
-        ).fillna(1.0)
+        clean_df["Quantity"] = _clean_numeric_series(
+            clean_df[semantic_mapping["quantity"]], 1.0
+        )
     elif "Quantity" not in clean_df.columns:
         clean_df["Quantity"] = 1.0
 
@@ -202,19 +214,28 @@ def sanitize_dataframe(df: pd.DataFrame, semantic_mapping: Dict[str, str]) -> pd
     elif "Date" in clean_df.columns:
         clean_df["Date"] = pd.to_datetime(clean_df["Date"], errors="coerce")
 
-    # Normalize Product
+    # Normalize Product (avoid literal 'nan' strings)
     if "product" in semantic_mapping:
-        clean_df["Product"] = clean_df[semantic_mapping["product"]].astype(str).fillna("Unknown")
+        raw_prod = clean_df[semantic_mapping["product"]].fillna("Unknown").astype(str)
+        clean_df["Product"] = raw_prod.replace(
+            {"nan": "Unknown", "None": "Unknown", "null": "Unknown", "": "Unknown"}
+        )
     elif "Product" not in clean_df.columns:
         clean_df["Product"] = "All Products"
 
-    # Normalize Category
+    # Normalize Category (avoid literal 'nan' strings)
     if "category" in semantic_mapping:
-        clean_df["Category"] = clean_df[semantic_mapping["category"]].astype(str).fillna("General")
+        raw_cat = clean_df[semantic_mapping["category"]].fillna("General").astype(str)
+        clean_df["Category"] = raw_cat.replace(
+            {"nan": "General", "None": "General", "null": "General", "": "General"}
+        )
 
-    # Normalize Region
+    # Normalize Region (avoid literal 'nan' strings)
     if "region" in semantic_mapping:
-        clean_df["Region"] = clean_df[semantic_mapping["region"]].astype(str).fillna("All Regions")
+        raw_reg = clean_df[semantic_mapping["region"]].fillna("All Regions").astype(str)
+        clean_df["Region"] = raw_reg.replace(
+            {"nan": "All Regions", "None": "All Regions", "null": "All Regions", "": "All Regions"}
+        )
 
     # Clean non-finite numbers in numeric columns
     numeric_cols = clean_df.select_dtypes(include=[np.number]).columns
@@ -231,6 +252,7 @@ def load_user_dataset(
 ) -> Tuple[pd.DataFrame, Dict[str, Any]]:
     """
     Securely loads and validates an uploaded dataset belonging to the authenticated user.
+    Supports CSV and Excel (.xlsx, .xls) formats.
 
     Returns:
         (sanitized_df, metadata_dict)
@@ -259,12 +281,16 @@ def load_user_dataset(
         )
 
     file_path = resolve_safe_dataset_path(row["storage_path"])
+    suffix = file_path.suffix.lower()
 
     try:
-        raw_df = pd.read_csv(file_path, nrows=max_rows)
+        if suffix in [".xlsx", ".xls"]:
+            raw_df = pd.read_excel(file_path, nrows=max_rows, engine="openpyxl" if suffix == ".xlsx" else None)
+        else:
+            raw_df = pd.read_csv(file_path, nrows=max_rows)
     except Exception as exc:
         raise DatasetAccessError(
-            f"Failed to read CSV dataset: {exc}",
+            f"Failed to read dataset file: {exc}",
             status_code=400,
         ) from exc
 

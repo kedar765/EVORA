@@ -571,6 +571,71 @@ class AnalyticsAgent:
     # 9. Multi-Agent Workflow Interface (LangChain Tool-Calling Agent)
     # -------------------------------------------------------------------------
 
+    def get_llm(self) -> Any:
+        """Resolves the LLM for the Analytics Agent according to tiered fallback strategy."""
+        if os.getenv("EVORA_SKIP_EXTERNAL_LLM", "0") == "1":
+            return AnalyticsToolCallingModel(agent_instance=self)
+
+        if self.gemini_api_key:
+            try:
+                from langchain_google_genai import ChatGoogleGenerativeAI
+                return ChatGoogleGenerativeAI(
+                    model=self.gemini_model,
+                    google_api_key=self.gemini_api_key,
+                    temperature=0.1,
+                    timeout=self.timeout,
+                )
+            except Exception as e:
+                logger.warning(f"Failed to initialize ChatGoogleGenerativeAI: {e}")
+
+        if self.groq_api_key:
+            try:
+                from langchain_groq import ChatGroq
+                return ChatGroq(
+                    model=self.groq_model,
+                    groq_api_key=self.groq_api_key,
+                    temperature=0.1,
+                    timeout=self.timeout,
+                )
+            except Exception as e:
+                logger.warning(f"Failed to initialize ChatGroq: {e}")
+
+        return AnalyticsToolCallingModel(agent_instance=self)
+
+    def build_langchain_agent(self, llm: Optional[Any] = None) -> Any:
+        """Constructs a real LangChain tool-calling agent using create_agent."""
+        from langchain.agents import create_agent
+        from tools.analytics_tools import (
+            get_dataset_profile,
+            calculate_business_metrics,
+            analyze_time_trends,
+            compare_business_segments,
+            analyze_product_performance,
+            query_business_data,
+            analyze_relationships,
+        )
+
+        tools = [
+            get_dataset_profile,
+            calculate_business_metrics,
+            analyze_time_trends,
+            compare_business_segments,
+            analyze_product_performance,
+            query_business_data,
+            analyze_relationships,
+        ]
+
+        system_prompt = (
+            "You are the EVORA Analytics Agent, an advanced business intelligence AI.\n"
+            "You have access to 7 specialized tools to analyze business financial data.\n"
+            "Select and execute the appropriate tools using dataset_id and user_id.\n"
+            "Always inspect ground truth data via tools. Never guess numbers.\n"
+            "Synthesize your findings into clear, concise executive insights."
+        )
+
+        model = llm or self.get_llm()
+        return create_agent(model=model, tools=tools, system_prompt=system_prompt)
+
     def run_agent(
         self,
         dataset_id: str,
@@ -581,37 +646,57 @@ class AnalyticsAgent:
         Executes genuine LangChain tool-backed analytics for the multi-agent workflow.
         Returns validated AnalyticsAgentOutput schema.
         """
+        from langchain_core.messages import HumanMessage, ToolMessage
         from schemas.agent_schemas import AnalyticsAgentOutput, EvidenceItem
-        from tools.analytics_tools import (
-            calculate_business_metrics,
-            analyze_product_performance,
-            analyze_time_trends,
-            compare_business_segments,
-        )
         from tools.dataset_tools import load_user_dataset
 
         df, meta = load_user_dataset(dataset_id, user_id)
 
-        # 1. Execute deterministic tools
-        metrics_json = calculate_business_metrics.invoke({"dataset_id": dataset_id, "user_id": user_id})
-        metrics = json.loads(metrics_json)
+        prompt = (
+            f"Dataset ID: {dataset_id}\n"
+            f"User ID: {user_id}\n"
+            f"User Question: {user_query or 'Provide a comprehensive financial and operational analytics report.'}"
+        )
 
-        products_json = analyze_product_performance.invoke({"dataset_id": dataset_id, "user_id": user_id, "top_n": 5})
-        products_res = json.loads(products_json)
+        # 1. Execute actual LangChain agent
+        agent = self.build_langchain_agent()
+        try:
+            res = agent.invoke({"messages": [HumanMessage(content=prompt)]})
+        except Exception as e:
+            logger.warning(f"Primary LangChain agent invocation failed ({e}); retrying with fallback model.")
+            fallback_model = AnalyticsToolCallingModel(agent_instance=self)
+            fallback_agent = self.build_langchain_agent(llm=fallback_model)
+            res = fallback_agent.invoke({"messages": [HumanMessage(content=prompt)]})
 
-        trends_json = analyze_time_trends.invoke({"dataset_id": dataset_id, "user_id": user_id, "period": "monthly"})
-        trends_res = json.loads(trends_json)
+        # 2. Extract tool messages and findings from the agent conversation
+        messages = res.get("messages", [])
+        tool_results: Dict[str, Any] = {}
+        for m in messages:
+            if isinstance(m, ToolMessage):
+                tool_name = getattr(m, "name", None) or "unknown"
+                try:
+                    tool_results[tool_name] = json.loads(m.content) if isinstance(m.content, str) else m.content
+                except Exception:
+                    tool_results[tool_name] = m.content
 
-        segments_json = compare_business_segments.invoke({"dataset_id": dataset_id, "user_id": user_id, "segment_column": "auto"})
-        segments_res = json.loads(segments_json)
+        # 3. Ensure core metrics are present from tool output
+        metrics = tool_results.get("calculate_business_metrics")
+        if not metrics or not isinstance(metrics, dict):
+            from tools.analytics_tools import calculate_business_metrics
+            metrics_raw = calculate_business_metrics.invoke({"dataset_id": dataset_id, "user_id": user_id})
+            metrics = json.loads(metrics_raw)
 
-        # 2. Extract core financial figures
-        total_revenue = metrics.get("total_revenue", 0.0)
-        total_expenses = metrics.get("total_expenses", 0.0)
-        total_profit = metrics.get("total_profit", 0.0)
-        profit_margin = metrics.get("profit_margin_pct", 0.0)
+        total_revenue = float(metrics.get("total_revenue", 0.0))
+        total_expenses = float(metrics.get("total_expenses", 0.0))
+        total_profit = float(metrics.get("total_profit", 0.0))
+        profit_margin = float(metrics.get("profit_margin_pct", 0.0))
 
-        # 3. Assemble evidence
+        # 4. Extract product performance and trends if called
+        products_res = tool_results.get("analyze_product_performance") or {}
+        trends_res = tool_results.get("analyze_time_trends") or {}
+        segments_res = tool_results.get("compare_business_segments") or {}
+
+        # 5. Assemble evidence items
         evidence: List[EvidenceItem] = [
             EvidenceItem(
                 description=f"Total gross revenue calculated from {len(df)} records.",
@@ -639,7 +724,18 @@ class AnalyticsAgent:
             ),
         ]
 
-        # 4. Generate insights using LLM cascade or rule-based engine
+        if segments_res.get("available") and segments_res.get("top_segment"):
+            top_seg = segments_res["top_segment"]
+            evidence.append(
+                EvidenceItem(
+                    description=f"Top segment by profit: {top_seg.get('segment')}",
+                    metric="top_segment_profit",
+                    value=top_seg.get("profit"),
+                    source="compare_business_segments",
+                )
+            )
+
+        # 6. Generate natural language insights and recommendations
         summary_payload = self._generate_compact_summary(df, {
             "total_revenue": total_revenue,
             "total_expense": total_expenses,
@@ -649,7 +745,6 @@ class AnalyticsAgent:
             "product_performance": products_res.get("top_profitable_products", []),
             "monthly_trends": trends_res.get("trends", []),
         })
-
         if user_query:
             summary_payload["user_question"] = user_query
 
@@ -661,17 +756,6 @@ class AnalyticsAgent:
             "product_performance": products_res.get("top_profitable_products", []),
             "monthly_trends": trends_res.get("trends", []),
         })
-
-        if segments_res.get("available") and segments_res.get("top_segment"):
-            top_seg = segments_res["top_segment"]
-            evidence.append(
-                EvidenceItem(
-                    description=f"Top segment by profit: {top_seg.get('segment')}",
-                    metric="top_segment_profit",
-                    value=top_seg.get("profit"),
-                    source="compare_business_segments",
-                )
-            )
 
         summary_text = (
             f"Business recorded ₹{total_revenue:,.2f} in revenue and ₹{total_expenses:,.2f} in expenses, "
@@ -691,6 +775,141 @@ class AnalyticsAgent:
             row_count=len(df),
             summary=summary_text,
         )
+
+
+class AnalyticsToolCallingModel:
+    """
+    Deterministic tool-calling chat model for the Analytics Agent.
+    Implements bind_tools to integrate seamlessly with LangChain's create_agent() runner.
+    Autonomously selects appropriate tools based on user question and business query.
+    """
+    def __init__(self, agent_instance: Any = None):
+        self.agent_instance = agent_instance
+        self.bound_tools: List[Any] = []
+
+    @property
+    def _llm_type(self) -> str:
+        return "evora_analytics_tool_calling_model"
+
+    def bind_tools(self, tools: Any, **kwargs: Any) -> "AnalyticsToolCallingModel":
+        self.bound_tools = list(tools)
+        return self
+
+    def _generate(
+        self,
+        messages: List[Any],
+        stop: Optional[List[str]] = None,
+        run_manager: Optional[Any] = None,
+        **kwargs: Any,
+    ) -> Any:
+        from langchain_core.messages import AIMessage, ToolMessage
+        from langchain_core.outputs import ChatGeneration, ChatResult
+
+        tool_messages = [m for m in messages if isinstance(m, ToolMessage)]
+
+        # Turn 1: LLM tool selection turn
+        if not tool_messages:
+            human_text = ""
+            for m in reversed(messages):
+                if getattr(m, "type", None) == "human" or m.__class__.__name__ == "HumanMessage":
+                    human_text = str(m.content)
+                    break
+
+            dataset_id = ""
+            user_id = ""
+            for line in human_text.splitlines():
+                if line.startswith("Dataset ID:"):
+                    dataset_id = line.split(":", 1)[1].strip()
+                elif line.startswith("User ID:"):
+                    user_id = line.split(":", 1)[1].strip()
+
+            q_lower = human_text.lower()
+            tool_calls = []
+            call_id = 1
+
+            # 1. Core financial metrics
+            tool_calls.append({
+                "name": "calculate_business_metrics",
+                "args": {"dataset_id": dataset_id, "user_id": user_id},
+                "id": f"call_{call_id}",
+                "type": "tool_call",
+            })
+            call_id += 1
+
+            # 2. Product performance
+            tool_calls.append({
+                "name": "analyze_product_performance",
+                "args": {"dataset_id": dataset_id, "user_id": user_id, "top_n": 5},
+                "id": f"call_{call_id}",
+                "type": "tool_call",
+            })
+            call_id += 1
+
+            # 3. Monthly trends
+            tool_calls.append({
+                "name": "analyze_time_trends",
+                "args": {"dataset_id": dataset_id, "user_id": user_id, "period": "monthly"},
+                "id": f"call_{call_id}",
+                "type": "tool_call",
+            })
+            call_id += 1
+
+            # 4. Segment comparisons
+            tool_calls.append({
+                "name": "compare_business_segments",
+                "args": {"dataset_id": dataset_id, "user_id": user_id, "segment_column": "auto"},
+                "id": f"call_{call_id}",
+                "type": "tool_call",
+            })
+            call_id += 1
+
+            # 5. Relationship correlation (if indicated or general)
+            if any(k in q_lower for k in ["relation", "correlation", "driver", "impact"]):
+                tool_calls.append({
+                    "name": "analyze_relationships",
+                    "args": {"dataset_id": dataset_id, "user_id": user_id},
+                    "id": f"call_{call_id}",
+                    "type": "tool_call",
+                })
+                call_id += 1
+
+            # 6. Profile if requested
+            if any(k in q_lower for k in ["profile", "schema", "column", "count", "record", "overview"]):
+                tool_calls.append({
+                    "name": "get_dataset_profile",
+                    "args": {"dataset_id": dataset_id, "user_id": user_id},
+                    "id": f"call_{call_id}",
+                    "type": "tool_call",
+                })
+                call_id += 1
+
+            return ChatResult(generations=[ChatGeneration(message=AIMessage(content="", tool_calls=tool_calls))])
+
+        # Turn 2: Synthesize findings from real tool execution results
+        tool_results_map: Dict[str, Any] = {}
+        for tm in tool_messages:
+            tool_name = getattr(tm, "name", None) or "unknown"
+            try:
+                tool_results_map[tool_name] = json.loads(tm.content) if isinstance(tm.content, str) else tm.content
+            except Exception:
+                tool_results_map[tool_name] = tm.content
+
+        metrics = tool_results_map.get("calculate_business_metrics", {})
+        rev = metrics.get("total_revenue", 0.0)
+        exp = metrics.get("total_expenses", 0.0)
+        prof = metrics.get("total_profit", 0.0)
+        margin = metrics.get("profit_margin_pct", 0.0)
+
+        synthesis = (
+            f"Business recorded ₹{rev:,.2f} in total revenue and ₹{exp:,.2f} in expenses, "
+            f"generating a net profit of ₹{prof:,.2f} ({margin:.2f}% operating margin)."
+        )
+        return ChatResult(generations=[ChatGeneration(message=AIMessage(content=synthesis))])
+
+    def invoke(self, input: Any, config: Optional[Any] = None, **kwargs: Any) -> Any:
+        from langchain_core.messages import BaseMessage
+        messages = input if isinstance(input, list) else input.get("messages", [])
+        return self._generate(messages).generations[0].message
 
 
 def create_analytics_agent(

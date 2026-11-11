@@ -172,5 +172,7 @@ class AgentWorkflowResponse(EVORABaseSchema):
 
     status: Literal["completed", "partial", "failed"] = "completed"
     errors: List[str] = Field(default_factory=list)
+    step_durations: Dict[str, float] = Field(default_factory=dict)
+    agent_statuses: Dict[str, str] = Field(default_factory=dict)
     analysis_id: Optional[str] = None
     created_at: Optional[int] = None

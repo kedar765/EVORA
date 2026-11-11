@@ -88,8 +88,8 @@ In EVORA, machine learning models and analytical routines are **underlying capab
 | **Decision Optimization Agent** | ✅ **Implemented** | LangChain agent with 6 decision tools & backward-compatible `recommend(...)` (`agents/decision_agent.py`) |
 | **LangGraph Multi-Agent Flow** | ✅ **Implemented** | Cyclical state graph orchestrating validation, analytics, risk, decision optimization, and report synthesis (`workflows/graph.py`) |
 | **Persistent Database Layer** | ✅ **Implemented** | SQLite database with user auth, session tokens, dataset ownership registry, and analysis history logs |
+| **Excel (.xlsx, .xls) Data Upload** | ✅ **Implemented** | Parsing of spreadsheet financial workbooks via `openpyxl` with numeric cleaning |
 | **RAG / Knowledge Retrieval** | 🔮 *Planned / Future* | Sentence Transformers + FAISS business document knowledge retrieval (`rag/`) |
-| **Excel (.xlsx) Data Upload** | 🔮 *Planned / Future* | Parsing of multi-sheet spreadsheet financial workbooks |
 
 ---
 

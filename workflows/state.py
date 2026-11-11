@@ -26,10 +26,12 @@ class EVORAAgentState(TypedDict, total=False):
     risk_results: Dict[str, Any]
     decision_results: Dict[str, Any]
 
-    # Workflow tracking and error management
+    # Workflow tracking, execution metrics, and error management
     current_step: str
     errors: List[str]
     execution_status: Literal["pending", "running", "completed", "partial", "failed"]
+    step_durations: Dict[str, float]
+    agent_statuses: Dict[str, str]
 
     # Final synthesized executive report
     final_report: Optional[Dict[str, Any]]

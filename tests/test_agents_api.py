@@ -223,6 +223,26 @@ class TestAgentsAPI(unittest.TestCase):
             self.assertEqual(row["user_id"], self.user_a_id)
             self.assertEqual(row["analysis_type"], "multi_agent_workflow")
 
+    def test_run_workflow_timeout(self):
+        """Verifies that exceeding the workflow timeout returns HTTP 504 Gateway Timeout."""
+        import time
+        from unittest.mock import patch
+
+        def slow_workflow(*args, **kwargs):
+            time.sleep(0.1)
+            return {"execution_status": "completed"}
+
+        with patch("backend.main.run_evora_workflow", side_effect=slow_workflow):
+            with patch.dict(os.environ, {"EVORA_WORKFLOW_TIMEOUT": "0.01"}):
+                res = self.client.post(
+                    "/agents/run",
+                    headers=self.trusted_headers,
+                    cookies=self.user_a_cookies,
+                    json={"dataset_id": self.dataset_id},
+                )
+                self.assertEqual(res.status_code, 504)
+                self.assertIn("timed out", res.json()["detail"].lower())
+
 
 if __name__ == "__main__":
     unittest.main()

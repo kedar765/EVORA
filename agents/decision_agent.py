@@ -252,6 +252,52 @@ class DecisionOptimizationAgent:
     # 2. Multi-Agent Workflow Interface (LangChain Tool-Calling Agent)
     # -------------------------------------------------------------------------
 
+    def get_llm(self) -> Any:
+        """Resolves the LLM for the Decision Agent according to tiered fallback strategy."""
+        if os.getenv("EVORA_SKIP_EXTERNAL_LLM", "0") == "1":
+            return DecisionToolCallingModel(agent_instance=self)
+
+        if self.gemini_api_key:
+            try:
+                from langchain_google_genai import ChatGoogleGenerativeAI
+                return ChatGoogleGenerativeAI(
+                    model=self.gemini_model,
+                    google_api_key=self.gemini_api_key,
+                    temperature=0.1,
+                    timeout=self.timeout,
+                )
+            except Exception as e:
+                logger.warning(f"Failed to initialize ChatGoogleGenerativeAI for DecisionAgent: {e}")
+
+        if self.groq_api_key:
+            try:
+                from langchain_groq import ChatGroq
+                return ChatGroq(
+                    model=self.groq_model,
+                    groq_api_key=self.groq_api_key,
+                    temperature=0.1,
+                    timeout=self.timeout,
+                )
+            except Exception as e:
+                logger.warning(f"Failed to initialize ChatGroq for DecisionAgent: {e}")
+
+        return DecisionToolCallingModel(agent_instance=self)
+
+    def build_langchain_agent(self, llm: Optional[Any] = None) -> Any:
+        """Constructs a real LangChain tool-calling agent using create_agent."""
+        from langchain.agents import create_agent
+
+        system_prompt = (
+            "You are the EVORA Decision Optimization Agent, a strategic business intelligence AI.\n"
+            "You have access to 6 specialized decision tools to simulate scenarios, evaluate strategies,\n"
+            "and construct prioritized tactical action plans.\n"
+            "Invoke the appropriate tools using dataset_id and user_id to compute exact financial impacts.\n"
+            "Enforce governance: EVORA proposes evidence-backed options, human leadership retains final approval."
+        )
+
+        model = llm or self.get_llm()
+        return create_agent(model=model, tools=DECISION_TOOLS, system_prompt=system_prompt)
+
     def run_agent(
         self,
         dataset_id: str,
@@ -265,6 +311,8 @@ class DecisionOptimizationAgent:
         Consumes analytics and risk contexts, runs scenario simulations,
         compares strategic alternatives, and returns validated DecisionAgentOutput.
         """
+        from langchain_core.messages import HumanMessage, ToolMessage
+
         analytics_ctx = analytics_context or {}
         risk_ctx = risk_context or {}
 
@@ -272,19 +320,57 @@ class DecisionOptimizationAgent:
         if risk_level not in {"low", "medium", "high", "critical"}:
             risk_level = "low"
 
-        # 1. Execute Decision Tools
-        strategies_raw = compare_business_strategies.invoke({"dataset_id": dataset_id, "user_id": user_id})
-        strategies_data = json.loads(strategies_raw)
+        context_summary = (
+            f"Analytics Context: NetProfit={analytics_ctx.get('total_profit', 'N/A')}, "
+            f"Margin={analytics_ctx.get('profit_margin', 'N/A')}%\n"
+            f"Risk Context: Score={risk_ctx.get('risk_score', 'N/A')}, Level={risk_level.upper()}"
+        )
 
-        actions_raw = generate_action_plan.invoke({
-            "dataset_id": dataset_id,
-            "user_id": user_id,
-            "risk_level": risk_level,
-            "priority_focus": "balanced",
-        })
-        actions_data = json.loads(actions_raw)
+        prompt = (
+            f"Dataset ID: {dataset_id}\n"
+            f"User ID: {user_id}\n"
+            f"{context_summary}\n"
+            f"User Question: {user_query or 'Formulate optimized strategic decisions and scenario simulations.'}"
+        )
 
-        # Run simulations for key scenarios
+        # 1. Execute actual LangChain agent
+        agent = self.build_langchain_agent()
+        try:
+            res = agent.invoke({"messages": [HumanMessage(content=prompt)]})
+        except Exception as e:
+            logger.warning(f"Primary LangChain decision agent invocation failed ({e}); retrying with fallback model.")
+            fallback_model = DecisionToolCallingModel(agent_instance=self)
+            fallback_agent = self.build_langchain_agent(llm=fallback_model)
+            res = fallback_agent.invoke({"messages": [HumanMessage(content=prompt)]})
+
+        # 2. Extract tool messages and findings from the agent conversation
+        messages = res.get("messages", [])
+        tool_results: Dict[str, Any] = {}
+        for m in messages:
+            if isinstance(m, ToolMessage):
+                tool_name = getattr(m, "name", None) or "unknown"
+                try:
+                    tool_results[tool_name] = json.loads(m.content) if isinstance(m.content, str) else m.content
+                except Exception:
+                    tool_results[tool_name] = m.content
+
+        # 3. Ensure core decision calculations exist
+        strategies_data = tool_results.get("compare_business_strategies")
+        if not strategies_data or not isinstance(strategies_data, dict):
+            strategies_raw = compare_business_strategies.invoke({"dataset_id": dataset_id, "user_id": user_id})
+            strategies_data = json.loads(strategies_raw)
+
+        actions_data = tool_results.get("generate_action_plan")
+        if not actions_data or not isinstance(actions_data, dict):
+            actions_raw = generate_action_plan.invoke({
+                "dataset_id": dataset_id,
+                "user_id": user_id,
+                "risk_level": risk_level,
+                "priority_focus": "balanced",
+            })
+            actions_data = json.loads(actions_raw)
+
+        # 4. Assemble scenarios
         scenarios: List[ScenarioSimulationResult] = []
         for strat in strategies_data.get("strategies", []):
             scenarios.append(
@@ -298,7 +384,7 @@ class DecisionOptimizationAgent:
                 )
             )
 
-        # 2. Assemble Structured Actions
+        # 5. Assemble structured actions
         actions_list: List[DecisionAction] = []
         for a in actions_data.get("actions", []):
             prio = a.get("priority", "medium").lower()
@@ -314,7 +400,7 @@ class DecisionOptimizationAgent:
                 )
             )
 
-        # 3. Strategy determination
+        # 6. Strategy determination
         rec_strategy = strategies_data.get("top_recommended_strategy") or "Balanced Margin Optimization"
         alt_strategies = [
             s.get("strategy_name")
@@ -322,7 +408,6 @@ class DecisionOptimizationAgent:
             if s.get("strategy_name") != rec_strategy
         ]
 
-        # Determine overall priority from risk
         if risk_level in {"high", "critical"}:
             overall_priority = "high"
         elif risk_level == "medium":
@@ -341,7 +426,7 @@ class DecisionOptimizationAgent:
             alternative_strategies=alt_strategies,
             actions=actions_list,
             scenarios=scenarios,
-            expected_outcome=f"Projected strategic upside across evaluated scenarios.",
+            expected_outcome="Projected strategic upside across evaluated scenarios.",
             assumptions=[
                 "Fixed costs remain stable during execution.",
                 "Implementation proceeds under human supervisor sign-off.",
@@ -349,6 +434,138 @@ class DecisionOptimizationAgent:
             human_approval_required=True,
             summary=summary_text,
         )
+
+
+class DecisionToolCallingModel:
+    """
+    Deterministic tool-calling chat model for the Decision Optimization Agent.
+    Implements bind_tools to integrate seamlessly with LangChain's create_agent() runner.
+    Autonomously selects appropriate tools based on Analytics and Risk findings.
+    """
+    def __init__(self, agent_instance: Any = None):
+        self.agent_instance = agent_instance
+        self.bound_tools: List[Any] = []
+
+    @property
+    def _llm_type(self) -> str:
+        return "evora_decision_tool_calling_model"
+
+    def bind_tools(self, tools: Any, **kwargs: Any) -> "DecisionToolCallingModel":
+        self.bound_tools = list(tools)
+        return self
+
+    def _generate(
+        self,
+        messages: List[Any],
+        stop: Optional[List[str]] = None,
+        run_manager: Optional[Any] = None,
+        **kwargs: Any,
+    ) -> Any:
+        from langchain_core.messages import AIMessage, ToolMessage
+        from langchain_core.outputs import ChatGeneration, ChatResult
+
+        tool_messages = [m for m in messages if isinstance(m, ToolMessage)]
+
+        # Turn 1: LLM tool selection turn
+        if not tool_messages:
+            human_text = ""
+            for m in reversed(messages):
+                if getattr(m, "type", None) == "human" or m.__class__.__name__ == "HumanMessage":
+                    human_text = str(m.content)
+                    break
+
+            dataset_id = ""
+            user_id = ""
+            risk_level = "low"
+
+            for line in human_text.splitlines():
+                if line.startswith("Dataset ID:"):
+                    dataset_id = line.split(":", 1)[1].strip()
+                elif line.startswith("User ID:"):
+                    user_id = line.split(":", 1)[1].strip()
+                elif "Level=" in line:
+                    risk_part = line.split("Level=")[1].strip().split()[0].lower()
+                    if risk_part in ["low", "medium", "high", "critical"]:
+                        risk_level = risk_part
+
+            tool_calls = []
+            call_id = 1
+
+            # 1. Compare strategies across pathways
+            tool_calls.append({
+                "name": "compare_business_strategies",
+                "args": {"dataset_id": dataset_id, "user_id": user_id},
+                "id": f"call_{call_id}",
+                "type": "tool_call",
+            })
+            call_id += 1
+
+            # 2. Generate action plan adapted to risk level
+            tool_calls.append({
+                "name": "generate_action_plan",
+                "args": {
+                    "dataset_id": dataset_id,
+                    "user_id": user_id,
+                    "risk_level": risk_level,
+                    "priority_focus": "cost_containment" if risk_level in ["high", "critical"] else "balanced",
+                },
+                "id": f"call_{call_id}",
+                "type": "tool_call",
+            })
+            call_id += 1
+
+            # 3. Scenario simulation
+            tool_calls.append({
+                "name": "simulate_business_scenario",
+                "args": {
+                    "dataset_id": dataset_id,
+                    "user_id": user_id,
+                    "price_change_pct": 5.0,
+                    "expense_change_pct": -3.0,
+                    "volume_change_pct": 2.0,
+                },
+                "id": f"call_{call_id}",
+                "type": "tool_call",
+            })
+            call_id += 1
+
+            # 4. Resource allocation optimization
+            tool_calls.append({
+                "name": "optimize_resource_allocation",
+                "args": {"dataset_id": dataset_id, "user_id": user_id, "reallocation_pct": 10.0},
+                "id": f"call_{call_id}",
+                "type": "tool_call",
+            })
+            call_id += 1
+
+            # 5. Strategic options evaluation
+            tool_calls.append({
+                "name": "evaluate_decision_options",
+                "args": {"dataset_id": dataset_id, "user_id": user_id},
+                "id": f"call_{call_id}",
+                "type": "tool_call",
+            })
+            call_id += 1
+
+            return ChatResult(generations=[ChatGeneration(message=AIMessage(content="", tool_calls=tool_calls))])
+
+        # Turn 2: Synthesize findings from real tool execution results
+        tool_results_map: Dict[str, Any] = {}
+        for tm in tool_messages:
+            tool_name = getattr(tm, "name", None) or "unknown"
+            try:
+                tool_results_map[tool_name] = json.loads(tm.content) if isinstance(tm.content, str) else tm.content
+            except Exception:
+                tool_results_map[tool_name] = tm.content
+
+        strat_res = tool_results_map.get("compare_business_strategies", {})
+        top_strat = strat_res.get("top_recommended_strategy", "Margin Optimization")
+        synthesis = f"Decision analysis concluded. Top recommended pathway: '{top_strat}'."
+        return ChatResult(generations=[ChatGeneration(message=AIMessage(content=synthesis))])
+
+    def invoke(self, input: Any, config: Optional[Any] = None, **kwargs: Any) -> Any:
+        messages = input if isinstance(input, list) else input.get("messages", [])
+        return self._generate(messages).generations[0].message
 
 
 def create_decision_agent(

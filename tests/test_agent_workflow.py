@@ -160,6 +160,19 @@ class TestAgentWorkflow(unittest.TestCase):
         self.assertIn("financial_highlights", report)
         self.assertIn("governance_disclaimer", report)
 
+        # 6. Verification of step durations and agent statuses
+        durations = final_state.get("step_durations", {})
+        self.assertIn("validate_dataset", durations)
+        self.assertIn("analytics_agent", durations)
+        self.assertIn("risk_agent", durations)
+        self.assertIn("decision_agent", durations)
+        self.assertIn("final_report", durations)
+
+        statuses = final_state.get("agent_statuses", {})
+        self.assertEqual(statuses.get("analytics_agent"), "completed")
+        self.assertEqual(statuses.get("risk_agent"), "completed")
+        self.assertEqual(statuses.get("decision_agent"), "completed")
+
     def test_workflow_conditional_routing_on_invalid_dataset(self):
         """Verifies that an invalid or unauthorized dataset routes directly to final report."""
         final_state = run_evora_workflow(
@@ -188,6 +201,32 @@ class TestAgentWorkflow(unittest.TestCase):
 
         self.assertEqual(final_state.get("execution_status"), "failed")
         self.assertIn("unauthorized", final_state["errors"][0].lower())
+
+    def test_workflow_partial_agent_failure(self):
+        """Verifies that if an individual agent encounters an error, the workflow preserves earlier results and status is partial."""
+        from unittest.mock import patch
+
+        def failing_risk_run(*args, **kwargs):
+            raise RuntimeError("Simulated transient ML engine failure")
+
+        with patch("agents.risk_agent.RiskAgent.run_agent", side_effect=failing_risk_run):
+            final_state = run_evora_workflow(
+                dataset_id=self.valid_dataset_id,
+                user_id=self.test_user_id,
+                user_query="Run workflow with risk agent fault tolerance.",
+            )
+
+            # Workflow should conclude with partial status, NOT crash
+            self.assertEqual(final_state.get("execution_status"), "partial")
+            self.assertGreaterEqual(len(final_state.get("errors", [])), 1)
+            self.assertIn("Simulated transient ML engine failure", final_state["errors"][0])
+
+            # Analytics output from preceding node MUST be preserved intact
+            self.assertIsNotNone(final_state.get("analytics_results"))
+            self.assertEqual(final_state["analytics_results"]["total_revenue"], 155000.0)
+
+            # Decision agent and final report must still have executed
+            self.assertIsNotNone(final_state.get("final_report"))
 
 
 if __name__ == "__main__":

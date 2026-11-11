@@ -432,13 +432,14 @@ async def read_business_csv(
     file: UploadFile,
     required_columns: list[str],
 ):
-    if (
-        not file.filename
-        or not file.filename.lower().endswith(".csv")
-    ):
+    filename_lower = (file.filename or "").lower()
+    is_csv = filename_lower.endswith(".csv")
+    is_excel = filename_lower.endswith(".xlsx") or filename_lower.endswith(".xls")
+
+    if not file.filename or not (is_csv or is_excel):
         raise HTTPException(
             status_code=400,
-            detail="Please select a CSV file.",
+            detail="Please select a CSV file (.csv) or Excel (.xlsx) file.",
         )
 
     try:
@@ -446,12 +447,18 @@ async def read_business_csv(
         if len(contents) > MAX_UPLOAD_SIZE_BYTES:
             raise HTTPException(
                 status_code=413,
-                detail="CSV file exceeds the 25 MB upload limit.",
+                detail="File exceeds the 25 MB upload limit.",
             )
 
-        dataframe = pd.read_csv(
-            io.BytesIO(contents)
-        )
+        if is_excel:
+            dataframe = pd.read_excel(
+                io.BytesIO(contents),
+                engine="openpyxl" if filename_lower.endswith(".xlsx") else None,
+            )
+        else:
+            dataframe = pd.read_csv(
+                io.BytesIO(contents)
+            )
 
     except HTTPException:
         raise
@@ -462,19 +469,33 @@ async def read_business_csv(
     ) as exc:
         raise HTTPException(
             status_code=400,
-            detail="Invalid or empty CSV file.",
+            detail="Invalid or empty data file.",
+        ) from exc
+    except Exception as exc:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Failed to read file: {exc}",
         ) from exc
 
     if dataframe.empty:
         raise HTTPException(
             status_code=400,
-            detail="The uploaded CSV file is empty.",
+            detail="The uploaded file is empty.",
         )
 
     dataframe.columns = [
         str(column).strip()
         for column in dataframe.columns
     ]
+
+    # Map semantic column alternatives if canonical required columns are missing
+    if any(column not in dataframe.columns for column in required_columns):
+        from tools.dataset_tools import identify_semantic_columns
+        semantic_map = identify_semantic_columns(list(dataframe.columns))
+        for req in required_columns:
+            req_lower = req.lower()
+            if req not in dataframe.columns and req_lower in semantic_map:
+                dataframe[req] = dataframe[semantic_map[req_lower]]
 
     missing = [
         column
@@ -486,7 +507,7 @@ async def read_business_csv(
         raise HTTPException(
             status_code=400,
             detail={
-                "message": "Required columns are missing from CSV.",
+                "message": "Required columns are missing from file.",
                 "missing_columns": missing,
                 "required_columns": required_columns,
                 "available_columns": list(dataframe.columns),
@@ -494,6 +515,12 @@ async def read_business_csv(
         )
 
     for column in required_columns:
+        if dataframe[column].dtype == object:
+            dataframe[column] = (
+                dataframe[column].astype(str)
+                .str.replace(r"[\$,₹,€,£,\s]", "", regex=True)
+                .str.replace(",", "", regex=False)
+            )
         dataframe[column] = pd.to_numeric(
             dataframe[column],
             errors="coerce",
@@ -1477,11 +1504,22 @@ def run_agents_workflow(
                 detail=f"Dataset '{dataset_id}' not found or access unauthorized.",
             )
 
+    import concurrent.futures
+
+    workflow_timeout = float(os.getenv("EVORA_WORKFLOW_TIMEOUT", "60.0"))
     try:
-        workflow_output = run_evora_workflow(
-            dataset_id=dataset_id,
-            user_id=user_id,
-            user_query=data.user_query or "",
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+            future = executor.submit(
+                run_evora_workflow,
+                dataset_id=dataset_id,
+                user_id=user_id,
+                user_query=data.user_query or "",
+            )
+            workflow_output = future.result(timeout=workflow_timeout)
+    except concurrent.futures.TimeoutError:
+        raise HTTPException(
+            status_code=504,
+            detail="Multi-agent workflow execution timed out.",
         )
     except Exception as exc:
         raise HTTPException(
@@ -1498,6 +1536,8 @@ def run_agents_workflow(
         "user_query": data.user_query or "",
         "status": status,
         "errors": errors,
+        "step_durations": workflow_output.get("step_durations", {}),
+        "agent_statuses": workflow_output.get("agent_statuses", {}),
         "analytics": make_json_safe(workflow_output.get("analytics_results")),
         "risk": make_json_safe(workflow_output.get("risk_results")),
         "decision": make_json_safe(workflow_output.get("decision_results")),

@@ -12,6 +12,8 @@ Implements execution nodes for the multi-agent graph:
 from __future__ import annotations
 
 import logging
+import logging
+import time
 from typing import Any, Dict
 
 from agents.analytics_agent import AnalyticsAgent
@@ -26,31 +28,46 @@ logger = logging.getLogger("evora.workflows.nodes")
 
 def validate_dataset_node(state: EVORAAgentState) -> Dict[str, Any]:
     """Validates user dataset ownership and prepares metadata profile."""
+    start_time = time.perf_counter()
     dataset_id = state.get("dataset_id", "")
     user_id = state.get("user_id", "")
     errors = list(state.get("errors", []))
+    durations = dict(state.get("step_durations", {}))
+    agent_statuses = dict(state.get("agent_statuses", {}))
 
     try:
         df, meta = load_user_dataset(dataset_id, user_id)
+        durations["validate_dataset"] = round(time.perf_counter() - start_time, 4)
+        agent_statuses["validate_dataset"] = "completed"
         return {
             "dataset_metadata": meta,
             "current_step": "validate_dataset",
             "execution_status": "running",
             "errors": errors,
+            "step_durations": durations,
+            "agent_statuses": agent_statuses,
         }
     except DatasetAccessError as e:
+        durations["validate_dataset"] = round(time.perf_counter() - start_time, 4)
+        agent_statuses["validate_dataset"] = "failed"
         errors.append(f"Dataset validation failed: {e.message}")
         return {
             "errors": errors,
             "current_step": "validate_dataset",
             "execution_status": "failed",
+            "step_durations": durations,
+            "agent_statuses": agent_statuses,
         }
     except Exception as e:
+        durations["validate_dataset"] = round(time.perf_counter() - start_time, 4)
+        agent_statuses["validate_dataset"] = "failed"
         errors.append(f"Unexpected dataset error: {str(e)}")
         return {
             "errors": errors,
             "current_step": "validate_dataset",
             "execution_status": "failed",
+            "step_durations": durations,
+            "agent_statuses": agent_statuses,
         }
 
 
@@ -59,26 +76,37 @@ def analytics_agent_node(state: EVORAAgentState) -> Dict[str, Any]:
     if state.get("execution_status") == "failed":
         return {"current_step": "analytics_agent"}
 
+    start_time = time.perf_counter()
     dataset_id = state.get("dataset_id", "")
     user_id = state.get("user_id", "")
     user_query = state.get("user_query", "")
     errors = list(state.get("errors", []))
+    durations = dict(state.get("step_durations", {}))
+    agent_statuses = dict(state.get("agent_statuses", {}))
 
     try:
         agent = AnalyticsAgent()
         output = agent.run_agent(dataset_id=dataset_id, user_id=user_id, user_query=user_query)
+        durations["analytics_agent"] = round(time.perf_counter() - start_time, 4)
+        agent_statuses["analytics_agent"] = "completed"
         return {
             "analytics_results": output.model_dump(),
             "current_step": "analytics_agent",
             "execution_status": "running",
+            "step_durations": durations,
+            "agent_statuses": agent_statuses,
         }
     except Exception as e:
         logger.exception("Analytics agent failed")
+        durations["analytics_agent"] = round(time.perf_counter() - start_time, 4)
+        agent_statuses["analytics_agent"] = "failed"
         errors.append(f"Analytics agent execution error: {str(e)}")
         return {
             "errors": errors,
             "current_step": "analytics_agent",
             "execution_status": "partial",
+            "step_durations": durations,
+            "agent_statuses": agent_statuses,
         }
 
 
@@ -87,11 +115,14 @@ def risk_agent_node(state: EVORAAgentState) -> Dict[str, Any]:
     if state.get("execution_status") == "failed":
         return {"current_step": "risk_agent"}
 
+    start_time = time.perf_counter()
     dataset_id = state.get("dataset_id", "")
     user_id = state.get("user_id", "")
     user_query = state.get("user_query", "")
     analytics_results = state.get("analytics_results", {})
     errors = list(state.get("errors", []))
+    durations = dict(state.get("step_durations", {}))
+    agent_statuses = dict(state.get("agent_statuses", {}))
 
     try:
         agent = RiskAgent()
@@ -101,18 +132,26 @@ def risk_agent_node(state: EVORAAgentState) -> Dict[str, Any]:
             analytics_context=analytics_results,
             user_query=user_query,
         )
+        durations["risk_agent"] = round(time.perf_counter() - start_time, 4)
+        agent_statuses["risk_agent"] = "completed"
         return {
             "risk_results": output.model_dump(),
             "current_step": "risk_agent",
             "execution_status": "running",
+            "step_durations": durations,
+            "agent_statuses": agent_statuses,
         }
     except Exception as e:
         logger.exception("Risk agent failed")
+        durations["risk_agent"] = round(time.perf_counter() - start_time, 4)
+        agent_statuses["risk_agent"] = "failed"
         errors.append(f"Risk agent execution error: {str(e)}")
         return {
             "errors": errors,
             "current_step": "risk_agent",
             "execution_status": "partial",
+            "step_durations": durations,
+            "agent_statuses": agent_statuses,
         }
 
 
@@ -121,12 +160,15 @@ def decision_agent_node(state: EVORAAgentState) -> Dict[str, Any]:
     if state.get("execution_status") == "failed":
         return {"current_step": "decision_agent"}
 
+    start_time = time.perf_counter()
     dataset_id = state.get("dataset_id", "")
     user_id = state.get("user_id", "")
     user_query = state.get("user_query", "")
     analytics_results = state.get("analytics_results", {})
     risk_results = state.get("risk_results", {})
     errors = list(state.get("errors", []))
+    durations = dict(state.get("step_durations", {}))
+    agent_statuses = dict(state.get("agent_statuses", {}))
 
     try:
         agent = DecisionOptimizationAgent()
@@ -137,25 +179,36 @@ def decision_agent_node(state: EVORAAgentState) -> Dict[str, Any]:
             risk_context=risk_results,
             user_query=user_query,
         )
+        durations["decision_agent"] = round(time.perf_counter() - start_time, 4)
+        agent_statuses["decision_agent"] = "completed"
         return {
             "decision_results": output.model_dump(),
             "current_step": "decision_agent",
             "execution_status": "running",
+            "step_durations": durations,
+            "agent_statuses": agent_statuses,
         }
     except Exception as e:
         logger.exception("Decision agent failed")
+        durations["decision_agent"] = round(time.perf_counter() - start_time, 4)
+        agent_statuses["decision_agent"] = "failed"
         errors.append(f"Decision agent execution error: {str(e)}")
         return {
             "errors": errors,
             "current_step": "decision_agent",
             "execution_status": "partial",
+            "step_durations": durations,
+            "agent_statuses": agent_statuses,
         }
 
 
 def final_report_node(state: EVORAAgentState) -> Dict[str, Any]:
     """Synthesizes unified executive business intelligence report across all agent outputs."""
+    start_time = time.perf_counter()
     errors = list(state.get("errors", []))
     status = state.get("execution_status", "completed")
+    durations = dict(state.get("step_durations", {}))
+    agent_statuses = dict(state.get("agent_statuses", {}))
 
     if status == "failed":
         final_report = {
@@ -169,10 +222,14 @@ def final_report_node(state: EVORAAgentState) -> Dict[str, Any]:
             "scenario_projections": [],
             "governance_disclaimer": "EVORA requires a valid accessible dataset to evaluate decisions.",
         }
+        durations["final_report"] = round(time.perf_counter() - start_time, 4)
+        agent_statuses["final_report"] = "failed"
         return {
             "final_report": final_report,
             "current_step": "final_report",
             "execution_status": "failed",
+            "step_durations": durations,
+            "agent_statuses": agent_statuses,
         }
 
     analytics = state.get("analytics_results", {})
@@ -226,9 +283,13 @@ def final_report_node(state: EVORAAgentState) -> Dict[str, Any]:
     }
 
     final_status = "partial" if errors else "completed"
+    durations["final_report"] = round(time.perf_counter() - start_time, 4)
+    agent_statuses["final_report"] = final_status
 
     return {
         "final_report": final_report,
         "current_step": "final_report",
         "execution_status": final_status,
+        "step_durations": durations,
+        "agent_statuses": agent_statuses,
     }
