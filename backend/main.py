@@ -6,6 +6,12 @@ import sys
 import time
 import uuid
 
+try:
+    import truststore
+    truststore.inject_into_ssl()
+except Exception:
+    pass
+
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from urllib.parse import urlsplit
@@ -297,15 +303,18 @@ def persist_uploaded_dataset(
     """Store a private CSV and its successful upload analysis."""
     dataset_id = str(uuid.uuid4())
     analysis_id = str(uuid.uuid4())
-    stored_filename = f"{dataset_id}.csv"
-    UPLOAD_STORAGE_DIR.mkdir(parents=True, exist_ok=True)
-    final_path = UPLOAD_STORAGE_DIR / stored_filename
-    temporary_path = UPLOAD_STORAGE_DIR / f".{stored_filename}.tmp"
-
     safe_original_filename = str(original_filename or "uploaded.csv")
     safe_original_filename = safe_original_filename.replace("\\", "/").split("/")[-1][:255]
     if not safe_original_filename:
         safe_original_filename = "uploaded.csv"
+
+    orig_ext = Path(safe_original_filename).suffix.lower()
+    if orig_ext not in (".csv", ".xlsx", ".xls"):
+        orig_ext = ".csv"
+    stored_filename = f"{dataset_id}{orig_ext}"
+    UPLOAD_STORAGE_DIR.mkdir(parents=True, exist_ok=True)
+    final_path = UPLOAD_STORAGE_DIR / stored_filename
+    temporary_path = UPLOAD_STORAGE_DIR / f".{stored_filename}.tmp"
 
     date_start = None
     date_end = None
@@ -898,7 +907,15 @@ def preview_dataset(
         )
 
     try:
-        preview_df = pd.read_csv(csv_path, nrows=rows)
+        orig_ext = Path(dataset["original_filename"] or "").suffix.lower()
+        if csv_path.suffix.lower() in (".xlsx", ".xls") or orig_ext in (".xlsx", ".xls"):
+            preview_df = pd.read_excel(
+                csv_path,
+                nrows=rows,
+                engine="openpyxl" if (csv_path.suffix.lower() == ".xlsx" or orig_ext == ".xlsx") else None,
+            )
+        else:
+            preview_df = pd.read_csv(csv_path, nrows=rows)
         records = make_json_safe(preview_df.to_dict(orient="records"))
     except (OSError, pd.errors.ParserError, UnicodeDecodeError) as exc:
         raise HTTPException(
@@ -1506,7 +1523,7 @@ def run_agents_workflow(
 
     import concurrent.futures
 
-    workflow_timeout = float(os.getenv("EVORA_WORKFLOW_TIMEOUT", "60.0"))
+    workflow_timeout = float(os.getenv("EVORA_WORKFLOW_TIMEOUT", "120.0"))
     try:
         with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
             future = executor.submit(

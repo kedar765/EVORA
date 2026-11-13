@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import Link from "next/link";
 import {
   FileText,
@@ -14,14 +14,42 @@ import {
   ShieldCheck,
   TrendingUp,
   Sparkles,
+  History,
+  Loader2,
+  Database,
 } from "lucide-react";
 import { useDashboard } from "@/components/dashboard/DashboardContext";
 import { formatINR } from "@/components/dashboard/types";
+import { api, type AnalysisHistoryItem } from "@/lib/api";
 
 export default function ReportsPage() {
   const { uploadResult, fullDataset } = useDashboard();
   const [downloadNotice, setDownloadNotice] = useState<string>("");
   const [showBriefPreview, setShowBriefPreview] = useState<boolean>(false);
+  const [historyList, setHistoryList] = useState<AnalysisHistoryItem[]>([]);
+  const [loadingHistory, setLoadingHistory] = useState<boolean>(true);
+
+  useEffect(() => {
+    let isMounted = true;
+    const loadHistory = async () => {
+      try {
+        setLoadingHistory(true);
+        const res = await api.listAnalysisHistory(50, 0);
+        if (isMounted) {
+          setHistoryList(res.history || []);
+        }
+      } catch (err: unknown) {
+        console.error("Failed to load analysis history:", err);
+      } finally {
+        if (isMounted) setLoadingHistory(false);
+      }
+    };
+
+    void loadHistory();
+    return () => {
+      isMounted = false;
+    };
+  }, []);
 
   const hasData = !!uploadResult;
   const metrics = uploadResult?.metrics;
@@ -371,6 +399,72 @@ export default function ReportsPage() {
           </div>
         </section>
       )}
+
+      {/* Persistent Analysis History & Audit Trail */}
+      <section aria-labelledby="history-heading" className="space-y-3 print:hidden">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <History className="w-4 h-4 text-indigo-600" />
+            <h2 className="text-sm font-semibold text-slate-900 uppercase tracking-wider">
+              Persistent Analysis History & Audit Trail
+            </h2>
+          </div>
+          <span className="text-xs text-slate-400 font-medium">
+            {historyList.length} recorded operations
+          </span>
+        </div>
+
+        {loadingHistory ? (
+          <div className="p-8 text-center bg-white rounded-xl border border-slate-200/90 shadow-xs">
+            <Loader2 className="w-5 h-5 animate-spin mx-auto text-indigo-600 mb-2" />
+            <p className="text-xs text-slate-500">Retrieving audit history from database...</p>
+          </div>
+        ) : historyList.length === 0 ? (
+          <div className="p-6 text-center bg-white rounded-xl border border-slate-200/90 shadow-xs text-xs text-slate-500">
+            No historical analysis records logged yet. Run multi-agent workflows, risk evaluations, or ML predictions to populate the audit log.
+          </div>
+        ) : (
+          <div className="bg-white rounded-xl border border-slate-200/90 shadow-xs overflow-hidden">
+            <div className="overflow-x-auto">
+              <table className="min-w-full divide-y divide-slate-200 text-left text-xs">
+                <thead className="bg-slate-50 font-bold text-slate-700">
+                  <tr>
+                    <th scope="col" className="px-4 py-3">Operation / Type</th>
+                    <th scope="col" className="px-4 py-3">Analysis ID</th>
+                    <th scope="col" className="px-4 py-3">Timestamp</th>
+                    <th scope="col" className="px-4 py-3">Dataset Reference</th>
+                    <th scope="col" className="px-4 py-3">Status</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100 font-medium text-slate-800">
+                  {historyList.map((item) => (
+                    <tr key={item.analysis_id} className="hover:bg-slate-50/70 transition-colors">
+                      <td className="px-4 py-3 font-semibold text-slate-900 capitalize">
+                        {item.analysis_type.replace(/_/g, " ")}
+                      </td>
+                      <td className="px-4 py-3 font-mono text-[11px] text-slate-500">
+                        {item.analysis_id.slice(0, 13)}...
+                      </td>
+                      <td className="px-4 py-3 text-slate-500 whitespace-nowrap">
+                        {new Date(item.created_at * 1000).toLocaleString()}
+                      </td>
+                      <td className="px-4 py-3 font-mono text-[11px] text-slate-500">
+                        {item.dataset_id ? `${item.dataset_id.slice(0, 13)}...` : "Direct Input"}
+                      </td>
+                      <td className="px-4 py-3">
+                        <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-200">
+                          <CheckCircle2 className="w-3 h-3 text-emerald-600" />
+                          {item.status}
+                        </span>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+      </section>
 
       {/* Planned Reports Suite */}
       <section aria-labelledby="roadmap-heading" className="space-y-3 print:hidden">

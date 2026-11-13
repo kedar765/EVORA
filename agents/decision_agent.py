@@ -20,7 +20,12 @@ from typing import Any, Dict, List, Optional
 
 from dotenv import load_dotenv
 
-from agents.config import create_gemini_chat_model, get_decision_model, ModelQuotaManager
+from agents.config import (
+    GROQ_DEFAULT_MODEL,
+    ModelQuotaManager,
+    create_gemini_chat_model,
+    get_decision_model,
+)
 from schemas.agent_schemas import (
     DecisionAction,
     DecisionAgentOutput,
@@ -64,7 +69,7 @@ class DecisionOptimizationAgent:
         )
         self.groq_api_key = groq_api_key or os.getenv("GROQ_API_KEY")
         self.gemini_model = gemini_model or get_decision_model()
-        self.groq_model = groq_model or os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
+        self.groq_model = groq_model or os.getenv("GROQ_MODEL", GROQ_DEFAULT_MODEL)
         self.timeout = float(timeout or os.getenv("LLM_TIMEOUT") or 25.0)
 
     def _number(self, value: Any, default: float = 0.0) -> float:

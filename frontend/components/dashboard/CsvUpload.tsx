@@ -92,15 +92,19 @@ export default function CsvUpload({
 
     const file = event.target.files?.[0] ?? null;
 
-    if (
-      file &&
-      !file.name.toLowerCase().endsWith(".csv")
-    ) {
-      setSelectedFile(null);
-      setError(
-        "Invalid file format. Please select a CSV file."
-      );
-      return;
+    if (file) {
+      const lower = file.name.toLowerCase();
+      const isValid =
+        lower.endsWith(".csv") ||
+        lower.endsWith(".xlsx") ||
+        lower.endsWith(".xls");
+      if (!isValid) {
+        setSelectedFile(null);
+        setError(
+          "Invalid file format. Please select a CSV or Excel (.xlsx, .xls) file."
+        );
+        return;
+      }
     }
 
     setSelectedFile(file);
@@ -115,7 +119,10 @@ export default function CsvUpload({
     setIsLoading(true);
 
     try {
-      const rawCsvText = await fileToUpload.text();
+      const isExcel =
+        fileToUpload.name.toLowerCase().endsWith(".xlsx") ||
+        fileToUpload.name.toLowerCase().endsWith(".xls");
+      const rawCsvText = isExcel ? undefined : await fileToUpload.text();
 
       const formData = new FormData();
       formData.append("file", fileToUpload);
@@ -276,17 +283,17 @@ export default function CsvUpload({
             <span className="block text-sm font-medium text-slate-700 truncate">
               {selectedFile
                 ? selectedFile.name
-                : "Choose CSV file from device"}
+                : "Choose CSV or Excel file from device"}
             </span>
 
             <span className="block text-[11px] text-slate-400">
-              Supported format: .csv (UTF-8)
+              Supported formats: .csv, .xlsx, .xls
             </span>
           </div>
 
           <input
             type="file"
-            accept=".csv,text/csv"
+            accept=".csv,text/csv,.xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,.xls,application/vnd.ms-excel"
             onChange={handleFileChange}
             disabled={isLoading}
             className="hidden"

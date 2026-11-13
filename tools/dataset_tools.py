@@ -282,10 +282,15 @@ def load_user_dataset(
 
     file_path = resolve_safe_dataset_path(row["storage_path"])
     suffix = file_path.suffix.lower()
+    orig_suffix = Path(row["original_filename"] or "").suffix.lower()
 
     try:
-        if suffix in [".xlsx", ".xls"]:
-            raw_df = pd.read_excel(file_path, nrows=max_rows, engine="openpyxl" if suffix == ".xlsx" else None)
+        if suffix in [".xlsx", ".xls"] or orig_suffix in [".xlsx", ".xls"]:
+            raw_df = pd.read_excel(
+                file_path,
+                nrows=max_rows,
+                engine="openpyxl" if (suffix == ".xlsx" or orig_suffix == ".xlsx") else None,
+            )
         else:
             raw_df = pd.read_csv(file_path, nrows=max_rows)
     except Exception as exc:

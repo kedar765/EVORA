@@ -23,7 +23,12 @@ import pandas as pd
 from dotenv import load_dotenv
 from pydantic import BaseModel, Field
 
-from agents.config import create_gemini_chat_model, get_analytics_model, ModelQuotaManager
+from agents.config import (
+    GROQ_DEFAULT_MODEL,
+    ModelQuotaManager,
+    create_gemini_chat_model,
+    get_analytics_model,
+)
 
 # Load environment configuration from workspace root if present
 _ROOT_DIR = Path(__file__).resolve().parent.parent
@@ -71,7 +76,7 @@ class AnalyticsAgent:
             or os.getenv("GROQ_API_KEY")
         )
         self.gemini_model = gemini_model or get_analytics_model()
-        self.groq_model = groq_model or os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
+        self.groq_model = groq_model or os.getenv("GROQ_MODEL", GROQ_DEFAULT_MODEL)
         
         env_timeout = os.getenv("LLM_TIMEOUT")
         if timeout is not None:

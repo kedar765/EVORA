@@ -16,6 +16,7 @@ import {
   type RiskAnalysisResult,
   formatINR,
 } from "./types";
+import { api } from "@/lib/api";
 
 interface RiskAgentProps {
   automaticRiskResult: RiskAnalysisResult | null;
@@ -135,48 +136,11 @@ export default function RiskAgent({
     setCustomLoading(true);
 
     try {
-      const response = await fetch(
-        `${API_BASE_URL}/analyze-risk`,
-        {
-          method: "POST",
-          credentials: "include",
-          cache: "no-store",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            Quantity: q,
-            Revenue: r,
-            Expense: e,
-          }),
-        }
-      );
-
-      if (response.status === 401) {
-        throw new Error(
-          "Your session has expired. Please log in again."
-        );
-      }
-
-      const data: unknown = await response
-        .json()
-        .catch(() => null);
-
-      if (!response.ok) {
-        const errorData = data as {
-          detail?: string | { message?: string };
-        } | null;
-
-        const detail = errorData?.detail;
-
-        throw new Error(
-          typeof detail === "string"
-            ? detail
-            : typeof detail?.message === "string"
-            ? detail.message
-            : "Risk analysis failed."
-        );
-      }
+      const data = await api.analyzeRisk({
+        Quantity: q,
+        Revenue: r,
+        Expense: e,
+      });
 
       const result = data as RiskAnalysisResult | null;
 

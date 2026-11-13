@@ -121,18 +121,18 @@ class TestIndependentGeminiModels(unittest.TestCase):
 
     def test_01_default_model_ids_match_specification(self):
         """Verify each agent has the exact assigned default model ID."""
-        self.assertEqual(ANALYTICS_DEFAULT_MODEL, "gemini-3.5-flash-lite")
-        self.assertEqual(RISK_DEFAULT_MODEL, "gemini-3.7-flash")
-        self.assertEqual(DECISION_DEFAULT_MODEL, "gemini-3.1-pro-preview")
+        self.assertEqual(ANALYTICS_DEFAULT_MODEL, "gemini-3.1-flash-lite")
+        self.assertEqual(RISK_DEFAULT_MODEL, "gemini-3.5-flash")
+        self.assertEqual(DECISION_DEFAULT_MODEL, "gemini-3.6-flash")
 
         # Agents instantiate with their respective defaults
         analytics = AnalyticsAgent()
         risk = RiskAgent()
         decision = DecisionOptimizationAgent()
 
-        self.assertEqual(analytics.gemini_model, "gemini-3.5-flash-lite")
-        self.assertEqual(risk.gemini_model, "gemini-3.7-flash")
-        self.assertEqual(decision.gemini_model, "gemini-3.1-pro-preview")
+        self.assertEqual(analytics.gemini_model, "gemini-3.1-flash-lite")
+        self.assertEqual(risk.gemini_model, "gemini-3.5-flash")
+        self.assertEqual(decision.gemini_model, "gemini-3.6-flash")
 
         # Ensure all three models are distinct
         distinct_models = {analytics.gemini_model, risk.gemini_model, decision.gemini_model}
@@ -164,8 +164,8 @@ class TestIndependentGeminiModels(unittest.TestCase):
             r2 = RiskAgent()
             d2 = DecisionOptimizationAgent()
             self.assertEqual(a2.gemini_model, "gemini-3.5-flash-lite-exp")
-            self.assertEqual(r2.gemini_model, "gemini-3.7-flash")
-            self.assertEqual(d2.gemini_model, "gemini-3.1-pro-preview")
+            self.assertEqual(r2.gemini_model, "gemini-3.5-flash")
+            self.assertEqual(d2.gemini_model, "gemini-3.6-flash")
 
     # -------------------------------------------------------------------------
     # 2. Tool Registration across Agents
@@ -225,7 +225,7 @@ class TestIndependentGeminiModels(unittest.TestCase):
         self.assertGreater(out.total_revenue, 0)
         self.assertIn(out.execution_mode, {"llm", "deterministic_fallback", "groq_fallback"})
         self.assertIsNotNone(out.model_used)
-        self.assertIn("gemini-3.5-flash-lite", out.model_used)
+        self.assertIn("gemini-3.1-flash-lite", out.model_used)
 
     def test_05_risk_agent_execution_and_schema_validation(self):
         """Verify RiskAgent consumes context, invokes tools, and returns valid RiskAgentOutput."""
@@ -244,7 +244,7 @@ class TestIndependentGeminiModels(unittest.TestCase):
         self.assertLessEqual(risk_out.risk_score, 100.0)
         self.assertIn(risk_out.risk_level, {"low", "medium", "high", "critical"})
         self.assertIn(risk_out.execution_mode, {"llm", "deterministic_fallback", "groq_fallback"})
-        self.assertIn("gemini-3.7-flash", risk_out.model_used)
+        self.assertIn("gemini-3.5-flash", risk_out.model_used)
 
     def test_06_decision_agent_execution_and_schema_validation(self):
         """Verify DecisionAgent consumes context and returns valid DecisionAgentOutput."""
@@ -266,7 +266,7 @@ class TestIndependentGeminiModels(unittest.TestCase):
         self.assertIsInstance(decision_out, DecisionAgentOutput)
         self.assertTrue(len(decision_out.actions) > 0)
         self.assertIn(decision_out.execution_mode, {"llm", "deterministic_fallback", "groq_fallback"})
-        self.assertIn("gemini-3.1-pro-preview", decision_out.model_used)
+        self.assertIn("gemini-3.6-flash", decision_out.model_used)
 
     # -------------------------------------------------------------------------
     # 4. Quota Circuit Breaker & Error Handling
@@ -325,9 +325,9 @@ class TestIndependentGeminiModels(unittest.TestCase):
         self.assertIn("risk_agent", models_used)
         self.assertIn("decision_agent", models_used)
 
-        self.assertIn("gemini-3.5-flash-lite", models_used["analytics_agent"])
-        self.assertIn("gemini-3.7-flash", models_used["risk_agent"])
-        self.assertIn("gemini-3.1-pro-preview", models_used["decision_agent"])
+        self.assertIn("gemini-3.1-flash-lite", models_used["analytics_agent"])
+        self.assertIn("gemini-3.5-flash", models_used["risk_agent"])
+        self.assertIn("gemini-3.6-flash", models_used["decision_agent"])
 
         # Never report deterministic fallback as completed LLM
         for agent_name in ["analytics_agent", "risk_agent", "decision_agent"]:
@@ -358,9 +358,9 @@ class TestIndependentGeminiModels(unittest.TestCase):
             return a + b
 
         models_to_test = [
-            ("gemini-3.5-flash-lite", "Analytics Agent"),
-            ("gemini-3.7-flash", "Risk Agent"),
-            ("gemini-3.1-pro-preview", "Decision Optimization Agent"),
+            ("gemini-3.1-flash-lite", "Analytics Agent"),
+            ("gemini-3.5-flash", "Risk Agent"),
+            ("gemini-3.6-flash", "Decision Optimization Agent"),
         ]
 
         live_results = {}

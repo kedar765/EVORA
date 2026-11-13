@@ -14,13 +14,14 @@ import {
 } from "lucide-react";
 import { useAuth } from "@/lib/auth";
 import { useDashboard } from "@/components/dashboard/DashboardContext";
+import { api, type HealthResponse } from "@/lib/api";
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
+const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
 export default function SettingsPage() {
   const { user, logout } = useAuth();
   const { uploadResult, clearDataset } = useDashboard();
-  const [backendHealth, setBackendHealth] = useState<{ status: string; service?: string } | null>(null);
+  const [backendHealth, setBackendHealth] = useState<HealthResponse | null>(null);
   const [isCheckingHealth, setIsCheckingHealth] = useState<boolean>(false);
   const [healthError, setHealthError] = useState<string>("");
 
@@ -28,9 +29,7 @@ export default function SettingsPage() {
     setIsCheckingHealth(true);
     setHealthError("");
     try {
-      const res = await fetch(`${API_BASE}/health`, { method: "GET" });
-      if (!res.ok) throw new Error(`Health check returned status ${res.status}`);
-      const data = await res.json();
+      const data = await api.getHealth();
       setBackendHealth(data);
     } catch (err: unknown) {
       setHealthError(err instanceof Error ? err.message : "Unable to contact backend service.");
@@ -44,9 +43,7 @@ export default function SettingsPage() {
     let isMounted = true;
     const loadInitialHealth = async () => {
       try {
-        const res = await fetch(`${API_BASE}/health`, { method: "GET" });
-        if (!res.ok) throw new Error(`Status ${res.status}`);
-        const data = await res.json();
+        const data = await api.getHealth();
         if (isMounted) setBackendHealth(data);
       } catch (err: unknown) {
         if (isMounted) {

@@ -81,6 +81,123 @@ export interface DecisionRecommendationResponse {
   created_at: number;
 }
 
+export interface DatasetItem {
+  dataset_id: string;
+  filename: string;
+  uploaded_at: number;
+  rows: number;
+  columns_count: number;
+  columns: string[];
+  date_start?: string | null;
+  date_end?: string | null;
+  status: string;
+}
+
+export interface DatasetListResponse {
+  success: boolean;
+  total: number;
+  limit: number;
+  offset: number;
+  datasets: DatasetItem[];
+}
+
+export interface DatasetDetailResponse {
+  success: boolean;
+  dataset: DatasetItem;
+}
+
+export interface DatasetPreviewResponse {
+  success: boolean;
+  dataset_id: string;
+  filename: string;
+  columns: string[];
+  preview_rows: number;
+  data: Record<string, unknown>[];
+}
+
+export interface AnalysisHistoryItem {
+  analysis_id: string;
+  dataset_id: string | null;
+  analysis_type: string;
+  created_at: number;
+  input_summary: Record<string, unknown>;
+  status: string;
+}
+
+export interface AnalysisHistoryListResponse {
+  success: boolean;
+  total: number;
+  limit: number;
+  offset: number;
+  history: AnalysisHistoryItem[];
+}
+
+export interface WhatIfRequest {
+  current_quantity: number;
+  current_revenue: number;
+  current_expense: number;
+  new_quantity: number;
+  new_revenue: number;
+  new_expense: number;
+}
+
+export interface WhatIfResponse {
+  success: boolean;
+  current_predicted_profit: number;
+  new_predicted_profit: number;
+  profit_difference: number;
+  result: string;
+  analysis_id?: string;
+  created_at?: number;
+}
+
+export interface ProfitPredictionRequest {
+  Quantity: number;
+  Revenue: number;
+  Expense: number;
+}
+
+export interface ProfitPredictionResponse {
+  success: boolean;
+  predicted_profit: number;
+  analysis_id?: string;
+  created_at?: number;
+}
+
+export interface RiskAnalysisRequest {
+  Quantity: number;
+  Revenue: number;
+  Expense: number;
+}
+
+export interface RiskAnalysisBackendResponse {
+  success: boolean;
+  predicted_profit: number;
+  anomaly_detected: boolean;
+  risk_score: number;
+  risk_level: string;
+  risk_analysis: {
+    risk_level: string;
+    risk_score: number;
+    predicted_profit: number;
+    anomaly_detected: boolean;
+    reasons: string[];
+  };
+  analysis_id?: string;
+  created_at?: number;
+}
+
+export interface HealthResponse {
+  status: string;
+  service?: string;
+  timestamp?: number;
+  models_loaded?: {
+    profit_model?: boolean;
+    anomaly_model?: boolean;
+    daily_profit_forecaster?: boolean;
+  };
+}
+
 const API_BASE_URL =
   process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
@@ -99,15 +216,18 @@ async function request<T>(
   options: RequestInit = {}
 ): Promise<T> {
   try {
+    const isFormData = options.body instanceof FormData;
+    const headers: Record<string, string> = {
+      ...(isFormData ? {} : { "Content-Type": "application/json" }),
+      ...((options.headers as Record<string, string>) || {}),
+    };
+
     const response = await fetch(
       `${API_BASE_URL}${endpoint}`,
       {
         ...options,
         credentials: "include",
-        headers: {
-          "Content-Type": "application/json",
-          ...options.headers,
-        },
+        headers,
       }
     );
 
@@ -155,6 +275,12 @@ function validateAuthResponse(
 }
 
 export const api = {
+  getHealth: async (): Promise<HealthResponse> => {
+    return request<HealthResponse>("/health", {
+      method: "GET",
+    });
+  },
+
   login: async (
     credentials: LoginCredentials
   ): Promise<AuthResponse> => {
@@ -182,7 +308,104 @@ export const api = {
 
     return validateAuthResponse(response);
   },
-    getDecisionRecommendations: async (
+
+  listDatasets: async (
+    limit = 20,
+    offset = 0
+  ): Promise<DatasetListResponse> => {
+    return request<DatasetListResponse>(
+      `/datasets?limit=${limit}&offset=${offset}`,
+      {
+        method: "GET",
+      }
+    );
+  },
+
+  getDataset: async (
+    datasetId: string
+  ): Promise<DatasetDetailResponse> => {
+    return request<DatasetDetailResponse>(
+      `/datasets/${encodeURIComponent(datasetId)}`,
+      {
+        method: "GET",
+      }
+    );
+  },
+
+  getDatasetPreview: async (
+    datasetId: string,
+    rows = 10
+  ): Promise<DatasetPreviewResponse> => {
+    return request<DatasetPreviewResponse>(
+      `/datasets/${encodeURIComponent(datasetId)}/preview?rows=${rows}`,
+      {
+        method: "GET",
+      }
+    );
+  },
+
+  listDatasetHistory: async (
+    datasetId: string,
+    limit = 20,
+    offset = 0
+  ): Promise<AnalysisHistoryListResponse> => {
+    return request<AnalysisHistoryListResponse>(
+      `/datasets/${encodeURIComponent(datasetId)}/history?limit=${limit}&offset=${offset}`,
+      {
+        method: "GET",
+      }
+    );
+  },
+
+  listAnalysisHistory: async (
+    limit = 20,
+    offset = 0
+  ): Promise<AnalysisHistoryListResponse> => {
+    return request<AnalysisHistoryListResponse>(
+      `/analysis-history?limit=${limit}&offset=${offset}`,
+      {
+        method: "GET",
+      }
+    );
+  },
+
+  predictProfit: async (
+    data: ProfitPredictionRequest
+  ): Promise<ProfitPredictionResponse> => {
+    return request<ProfitPredictionResponse>(
+      "/ml/predict-profit",
+      {
+        method: "POST",
+        body: JSON.stringify(data),
+      }
+    );
+  },
+
+  analyzeRisk: async (
+    data: RiskAnalysisRequest
+  ): Promise<RiskAnalysisBackendResponse> => {
+    return request<RiskAnalysisBackendResponse>(
+      "/analyze-risk",
+      {
+        method: "POST",
+        body: JSON.stringify(data),
+      }
+    );
+  },
+
+  runWhatIf: async (
+    data: WhatIfRequest
+  ): Promise<WhatIfResponse> => {
+    return request<WhatIfResponse>(
+      "/what-if",
+      {
+        method: "POST",
+        body: JSON.stringify(data),
+      }
+    );
+  },
+
+  getDecisionRecommendations: async (
     data: DecisionRecommendationRequest
   ): Promise<DecisionRecommendationResponse> => {
     return request<DecisionRecommendationResponse>(

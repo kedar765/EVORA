@@ -32,6 +32,10 @@ interface DashboardContextType {
     data: UploadResult,
     rawCsvText?: string
   ) => void;
+  loadSavedDataset: (
+    uploadData: UploadResult,
+    preview?: DatasetPreviewData | null
+  ) => void;
   clearDataset: () => void;
 }
 
@@ -442,6 +446,29 @@ export function DashboardProvider({
     [userId]
   );
 
+  const loadSavedDataset = useCallback(
+    (
+      uploadData: UploadResult,
+      preview?: DatasetPreviewData | null
+    ) => {
+      if (!userId) {
+        throw new Error("Session expired. Please log in again.");
+      }
+
+      updateDashboardSnapshot(userId, (current) => ({
+        ...current,
+        uploadResult: uploadData,
+        datasetPreview: preview ?? current.datasetPreview,
+      }));
+
+      saveStoredData(STORAGE_KEYS.upload, userId, uploadData);
+      if (preview) {
+        saveStoredData(STORAGE_KEYS.preview, userId, preview);
+      }
+    },
+    [userId]
+  );
+
   return (
     <DashboardContext.Provider
       value={{
@@ -452,6 +479,7 @@ export function DashboardProvider({
         setIsUploading,
         setUploadResult,
         handleUploadSuccess,
+        loadSavedDataset,
         clearDataset,
       }}
     >

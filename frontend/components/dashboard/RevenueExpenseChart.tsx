@@ -6,6 +6,8 @@ import {
   Calendar,
   Layers,
   Info,
+  TrendingUp,
+  ArrowUpRight,
 } from "lucide-react";
 import { FullDatasetData, UploadResult, formatINR } from "./types";
 
@@ -86,7 +88,6 @@ export default function RevenueExpenseChart({
     const revCol = headers.find((h) => /^revenue|sales|income$/i.test(h.trim())) || "Revenue";
     const expCol = headers.find((h) => /^expense|cost|expenditure$/i.test(h.trim())) || "Expense";
 
-    // Check if date column has valid dates
     const hasValidDates =
       dateCol &&
       records.some((r) => {
@@ -100,7 +101,6 @@ export default function RevenueExpenseChart({
       // 1. Time-series aggregation by Date
       const dateMap = new Map<string, { revenue: number; expense: number }>();
 
-      // Sort chronological if possible
       const sorted = [...records].sort((a, b) => {
         const da = new Date(String(a[dateCol])).getTime();
         const db = new Date(String(b[dateCol])).getTime();
@@ -165,7 +165,7 @@ export default function RevenueExpenseChart({
       return { chartData: points, groupingMode: `Category Breakdown (${productCol})`, maxVal: max };
     }
 
-    // 3. Fallback: Record by Record (first 25 records if large)
+    // 3. Fallback: Sequential records (first 25)
     const limit = Math.min(records.length, 25);
     for (let i = 0; i < limit; i++) {
       const row = records[i];
@@ -175,7 +175,7 @@ export default function RevenueExpenseChart({
       const margin = rev > 0 ? (profit / rev) * 100 : 0;
 
       points.push({
-        label: `Record ${i + 1}`,
+        label: `Row ${i + 1}`,
         revenue: rev,
         expense: exp,
         profit,
@@ -190,12 +190,12 @@ export default function RevenueExpenseChart({
   const hasChartData = chartData.length > 0;
 
   // Chart dimensions
-  const svgWidth = 800;
-  const svgHeight = 280;
-  const paddingLeft = 60;
-  const paddingRight = 20;
-  const paddingTop = 25;
-  const paddingBottom = 40;
+  const svgWidth = 840;
+  const svgHeight = 290;
+  const paddingLeft = 65;
+  const paddingRight = 25;
+  const paddingTop = 30;
+  const paddingBottom = 42;
 
   const chartInnerWidth = svgWidth - paddingLeft - paddingRight;
   const chartInnerHeight = svgHeight - paddingTop - paddingBottom;
@@ -206,19 +206,20 @@ export default function RevenueExpenseChart({
   }));
 
   const barGroupWidth = chartInnerWidth / Math.max(chartData.length, 1);
-  const barWidth = Math.min(28, Math.max(6, (barGroupWidth - 14) / 2));
+  const barWidth = Math.min(26, Math.max(8, (barGroupWidth - 16) / 2));
 
   return (
-    <div className="bg-white rounded-xl border border-slate-200/90 p-5 sm:p-6 shadow-xs space-y-4">
+    <div className="bg-white rounded-2xl border border-slate-200/90 p-5 sm:p-6 shadow-xs space-y-4">
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 pb-3 border-b border-slate-100">
         <div>
           <div className="flex items-center gap-2">
+            <span className="w-1.5 h-4 rounded-full bg-blue-600" />
             <span className="text-xs font-bold uppercase tracking-wider text-slate-500">
-              Primary Financial Visualization
+              Comparative Analysis
             </span>
             {hasChartData && (
-              <span className="inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded-full bg-slate-100 text-slate-600">
+              <span className="inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded-full bg-slate-100 text-slate-700">
                 {groupingMode.includes("Date") ? (
                   <Calendar className="w-3 h-3 text-blue-600" />
                 ) : (
@@ -228,21 +229,21 @@ export default function RevenueExpenseChart({
               </span>
             )}
           </div>
-          <h2 className="text-lg font-bold text-slate-900 tracking-tight mt-0.5">
+          <h2 className="text-lg font-bold text-slate-900 tracking-tight mt-1">
             Revenue vs. Expense Comparison
           </h2>
         </div>
 
         {/* Legend */}
         {hasChartData && (
-          <div className="flex items-center gap-4 text-xs font-medium self-start sm:self-auto">
-            <div className="flex items-center gap-1.5">
-              <span className="w-3 h-3 rounded-sm bg-blue-600 inline-block" />
-              <span className="text-slate-700">Revenue</span>
+          <div className="flex items-center gap-4 text-xs font-semibold self-start sm:self-auto bg-slate-50 px-3 py-1.5 rounded-xl border border-slate-200/70">
+            <div className="flex items-center gap-2">
+              <span className="w-3 h-3 rounded bg-blue-600 inline-block shadow-2xs" />
+              <span className="text-slate-800">Revenue</span>
             </div>
-            <div className="flex items-center gap-1.5">
-              <span className="w-3 h-3 rounded-sm bg-amber-500 inline-block" />
-              <span className="text-slate-700">Expense</span>
+            <div className="flex items-center gap-2">
+              <span className="w-3 h-3 rounded bg-amber-500 inline-block shadow-2xs" />
+              <span className="text-slate-800">Expense</span>
             </div>
           </div>
         )}
@@ -250,21 +251,21 @@ export default function RevenueExpenseChart({
 
       {isLoading ? (
         <div className="h-64 flex flex-col items-center justify-center space-y-2 text-slate-400">
-          <div className="w-6 h-6 border-2 border-blue-600 border-t-transparent rounded-full animate-spin" />
+          <div className="w-7 h-7 border-2 border-blue-600 border-t-transparent rounded-full animate-spin" />
           <span className="text-xs font-medium text-slate-500">
-            Rendering visualization from ingested records...
+            Synthesizing comparative telemetry...
           </span>
         </div>
       ) : !hasChartData ? (
-        <div className="h-64 flex flex-col items-center justify-center text-center p-6 space-y-2 bg-slate-50/60 rounded-lg border border-dashed border-slate-200">
-          <div className="w-10 h-10 rounded-full bg-slate-100 flex items-center justify-center text-slate-400">
-            <BarChart3 className="w-5 h-5" />
+        <div className="h-64 flex flex-col items-center justify-center text-center p-6 space-y-2.5 bg-slate-50/60 rounded-xl border border-dashed border-slate-200">
+          <div className="w-11 h-11 rounded-2xl bg-white border border-slate-200 flex items-center justify-center text-slate-400 shadow-2xs">
+            <BarChart3 className="w-5 h-5 text-blue-600" />
           </div>
-          <h3 className="text-sm font-semibold text-slate-800">
-            No Data Available for Visualization
+          <h3 className="text-sm font-bold text-slate-800">
+            Awaiting Dataset for Comparative Visualization
           </h3>
-          <p className="text-xs text-slate-400 max-w-md">
-            Upload a business CSV with valid Revenue and Expense columns to generate a side-by-side comparison chart.
+          <p className="text-xs text-slate-500 max-w-sm">
+            Ingest a business CSV or Excel file containing Revenue and Expense columns to generate side-by-side performance bars.
           </p>
         </div>
       ) : (
@@ -276,6 +277,17 @@ export default function RevenueExpenseChart({
               className="w-full h-auto min-w-[580px] select-none"
               aria-label="Revenue versus expense comparison chart"
             >
+              <defs>
+                <linearGradient id="blueRevGradient" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0%" stopColor="#2563eb" />
+                  <stop offset="100%" stopColor="#1d4ed8" />
+                </linearGradient>
+                <linearGradient id="amberExpGradient" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0%" stopColor="#f59e0b" />
+                  <stop offset="100%" stopColor="#d97706" />
+                </linearGradient>
+              </defs>
+
               {/* Horizontal grid lines & Y-axis labels */}
               {yTicks.map((tick, idx) => (
                 <g key={idx}>
@@ -290,10 +302,11 @@ export default function RevenueExpenseChart({
                   />
                   <text
                     x={paddingLeft - 8}
-                    y={tick.y + 3}
+                    y={tick.y + 3.5}
                     textAnchor="end"
                     fontSize="10"
                     fill="#94a3b8"
+                    fontWeight="500"
                     fontFamily="inherit"
                   >
                     {tick.val >= 100000
@@ -312,8 +325,8 @@ export default function RevenueExpenseChart({
                 const revHeight = (d.revenue / maxVal) * chartInnerHeight;
                 const expHeight = (d.expense / maxVal) * chartInnerHeight;
 
-                const revX = groupCenterX - barWidth - 1.5;
-                const expX = groupCenterX + 1.5;
+                const revX = groupCenterX - barWidth - 2;
+                const expX = groupCenterX + 2;
 
                 const revY = paddingTop + chartInnerHeight - revHeight;
                 const expY = paddingTop + chartInnerHeight - expHeight;
@@ -330,13 +343,15 @@ export default function RevenueExpenseChart({
                     {/* Hover highlight background */}
                     {isHovered && (
                       <rect
-                        x={paddingLeft + idx * barGroupWidth}
+                        x={paddingLeft + idx * barGroupWidth + 2}
                         y={paddingTop}
-                        width={barGroupWidth}
+                        width={barGroupWidth - 4}
                         height={chartInnerHeight}
-                        fill="#f1f5f9"
-                        rx="4"
-                        opacity="0.7"
+                        fill="#f8fafc"
+                        stroke="#cbd5e1"
+                        strokeWidth="1"
+                        rx="8"
+                        opacity="0.9"
                       />
                     )}
 
@@ -345,10 +360,10 @@ export default function RevenueExpenseChart({
                       x={revX}
                       y={revY}
                       width={barWidth}
-                      height={Math.max(revHeight, 2)}
-                      fill="#2563eb"
-                      rx="2"
-                      className="transition-all"
+                      height={Math.max(revHeight, 3)}
+                      fill="url(#blueRevGradient)"
+                      rx="3"
+                      className="transition-all duration-150"
                       opacity={hoveredIndex === null || isHovered ? 1 : 0.6}
                     />
 
@@ -357,10 +372,10 @@ export default function RevenueExpenseChart({
                       x={expX}
                       y={expY}
                       width={barWidth}
-                      height={Math.max(expHeight, 2)}
-                      fill="#f59e0b"
-                      rx="2"
-                      className="transition-all"
+                      height={Math.max(expHeight, 3)}
+                      fill="url(#amberExpGradient)"
+                      rx="3"
+                      className="transition-all duration-150"
                       opacity={hoveredIndex === null || isHovered ? 1 : 0.6}
                     />
 
@@ -371,7 +386,7 @@ export default function RevenueExpenseChart({
                       textAnchor="middle"
                       fontSize="10"
                       fill={isHovered ? "#0f172a" : "#64748b"}
-                      fontWeight={isHovered ? "bold" : "normal"}
+                      fontWeight={isHovered ? "700" : "500"}
                       fontFamily="inherit"
                     >
                       {d.label.length > 10 ? `${d.label.slice(0, 9)}…` : d.label}
@@ -384,16 +399,15 @@ export default function RevenueExpenseChart({
 
           {/* Active Hover / Detail Card */}
           {hoveredIndex !== null && chartData[hoveredIndex] ? (
-            <div className="p-3.5 rounded-lg bg-slate-50 border border-slate-200 flex flex-wrap items-center justify-between gap-3 text-xs">
+            <div className="p-3.5 rounded-xl bg-slate-50 border border-slate-200/90 flex flex-wrap items-center justify-between gap-3 text-xs shadow-2xs">
               <div className="flex items-center gap-2">
-                <span className="font-bold text-slate-900">
+                <span className="font-bold text-slate-900 bg-white px-2.5 py-1 rounded-lg border border-slate-200">
                   {chartData[hoveredIndex].label}
                 </span>
-                <span className="text-slate-400">•</span>
                 <span className="text-blue-700 font-semibold">
                   Revenue: {formatINR(chartData[hoveredIndex].revenue)}
                 </span>
-                <span className="text-slate-400">•</span>
+                <span className="text-slate-300">•</span>
                 <span className="text-amber-700 font-semibold">
                   Expense: {formatINR(chartData[hoveredIndex].expense)}
                 </span>
@@ -402,24 +416,25 @@ export default function RevenueExpenseChart({
               <div className="flex items-center gap-2">
                 <span className="text-slate-500 font-medium">Net Profit:</span>
                 <span
-                  className={`font-bold ${
+                  className={`font-bold px-2 py-0.5 rounded-md ${
                     chartData[hoveredIndex].profit >= 0
-                      ? "text-emerald-700"
-                      : "text-rose-700"
+                      ? "text-emerald-700 bg-emerald-50 border border-emerald-200/60"
+                      : "text-rose-700 bg-rose-50 border border-rose-200/60"
                   }`}
                 >
-                  {formatINR(chartData[hoveredIndex].profit)} (
-                  {chartData[hoveredIndex].margin.toFixed(1)}%)
+                  {formatINR(chartData[hoveredIndex].profit)} ({chartData[hoveredIndex].margin.toFixed(1)}%)
                 </span>
               </div>
             </div>
           ) : (
             <div className="flex items-center justify-between text-[11px] text-slate-400 pt-1">
-              <span className="flex items-center gap-1">
-                <Info className="w-3 h-3 text-slate-400" />
-                <span>Hover over any bar to view exact revenue, expenditure, and margin metrics.</span>
+              <span className="flex items-center gap-1.5">
+                <Info className="w-3.5 h-3.5 text-slate-400" />
+                <span>Hover over any group to inspect itemized revenue, expenditure, and margin.</span>
               </span>
-              <span>Total Periods/Categories: {chartData.length}</span>
+              <span className="font-medium text-slate-500">
+                Series Count: {chartData.length}
+              </span>
             </div>
           )}
         </div>

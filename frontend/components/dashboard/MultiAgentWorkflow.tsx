@@ -2,18 +2,19 @@
 
 import React, { useState } from "react";
 import {
-  Bot,
   Play,
   CheckCircle2,
   AlertTriangle,
-  ShieldCheck,
-  TrendingUp,
   BrainCircuit,
   FileText,
   Loader2,
   Sparkles,
   ChevronRight,
   ShieldAlert,
+  BarChart3,
+  Target,
+  ArrowRight,
+  TrendingUp,
 } from "lucide-react";
 import { api, type AgentWorkflowResponse } from "@/lib/api";
 import { formatINR } from "./types";
@@ -65,44 +66,100 @@ export default function MultiAgentWorkflow({
   };
 
   return (
-    <div className="bg-white rounded-2xl border border-slate-200/90 shadow-sm p-6 sm:p-7 space-y-6">
+    <div className="bg-white rounded-2xl border border-slate-200/90 shadow-xs p-5 sm:p-7 space-y-6">
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4">
         <div>
-          <div className="flex items-center gap-2 mb-1">
-            <span className="inline-flex items-center justify-center w-6 h-6 rounded-md bg-purple-50 text-purple-700">
-              <BrainCircuit className="w-4 h-4 text-purple-600" />
+          <div className="flex items-center gap-2 mb-1.5">
+            <span className="w-1.5 h-4 rounded-full bg-indigo-600" />
+            <span className="text-xs font-bold uppercase tracking-wider text-indigo-700">
+              Autonomous Multi-Agent System
             </span>
-            <span className="text-xs font-bold uppercase tracking-wider text-purple-700">
-              LangGraph Orchestration
+            <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-indigo-50 text-indigo-700 border border-indigo-200/60 uppercase">
+              LangGraph
             </span>
           </div>
 
           <h2 className="text-xl font-bold text-slate-900 tracking-tight">
-            Multi-Agent Decision Optimization System
+            Decision Optimization & Reasoning Workflow
           </h2>
 
-          <p className="text-sm text-slate-500 mt-1 max-w-2xl">
-            Coordinate the <strong>Analytics Agent</strong>, <strong>Risk Agent</strong>, and{" "}
-            <strong>Decision Optimization Agent</strong> via LangGraph to produce an evidence-backed
-            executive business strategy.
+          <p className="text-xs sm:text-sm text-slate-500 mt-1 max-w-2xl leading-relaxed">
+            Coordinated execution of 3 specialized LangChain agents using dedicated Gemini models to profile data, detect operational risks, and simulate decision action plans.
           </p>
         </div>
 
         {hasData && (
-          <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg bg-slate-50 border border-slate-200 text-xs font-medium text-slate-600">
-            <span className="w-2 h-2 rounded-full bg-emerald-500"></span>
-            <span>Target: <strong>{filename || "Active CSV"}</strong></span>
+          <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-xl bg-slate-50 border border-slate-200/80 text-xs font-medium text-slate-700 self-start sm:self-auto">
+            <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+            <span>Target: <strong className="text-slate-900">{filename || "Active Dataset"}</strong></span>
           </div>
         )}
       </div>
 
+      {/* 3 Specialized Agents Model Architecture Bar */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-3 p-3.5 rounded-xl bg-slate-50/80 border border-slate-200/70 text-xs">
+        {/* Agent 1 */}
+        <div className="flex items-start gap-2.5 p-2 rounded-lg bg-white border border-slate-200/60">
+          <div className="w-7 h-7 rounded-lg bg-blue-50 text-blue-600 flex items-center justify-center shrink-0">
+            <BarChart3 className="w-3.5 h-3.5" />
+          </div>
+          <div className="min-w-0">
+            <div className="flex items-center justify-between gap-1">
+              <span className="font-bold text-slate-900">Analytics Agent</span>
+              <span className="text-[9px] font-bold px-1.5 py-0.2 rounded bg-blue-50 text-blue-700">
+                7 Tools
+              </span>
+            </div>
+            <p className="text-[10px] text-slate-500 font-mono mt-0.5 truncate">
+              gemini-3.1-flash-lite
+            </p>
+          </div>
+        </div>
+
+        {/* Agent 2 */}
+        <div className="flex items-start gap-2.5 p-2 rounded-lg bg-white border border-slate-200/60">
+          <div className="w-7 h-7 rounded-lg bg-amber-50 text-amber-600 flex items-center justify-center shrink-0">
+            <ShieldAlert className="w-3.5 h-3.5" />
+          </div>
+          <div className="min-w-0">
+            <div className="flex items-center justify-between gap-1">
+              <span className="font-bold text-slate-900">Risk Agent</span>
+              <span className="text-[9px] font-bold px-1.5 py-0.2 rounded bg-amber-50 text-amber-700">
+                7 Tools
+              </span>
+            </div>
+            <p className="text-[10px] text-slate-500 font-mono mt-0.5 truncate">
+              gemini-3.5-flash
+            </p>
+          </div>
+        </div>
+
+        {/* Agent 3 */}
+        <div className="flex items-start gap-2.5 p-2 rounded-lg bg-white border border-slate-200/60">
+          <div className="w-7 h-7 rounded-lg bg-indigo-50 text-indigo-600 flex items-center justify-center shrink-0">
+            <Target className="w-3.5 h-3.5" />
+          </div>
+          <div className="min-w-0">
+            <div className="flex items-center justify-between gap-1">
+              <span className="font-bold text-slate-900">Decision Agent</span>
+              <span className="text-[9px] font-bold px-1.5 py-0.2 rounded bg-indigo-50 text-indigo-700">
+                6 Tools
+              </span>
+            </div>
+            <p className="text-[10px] text-slate-500 font-mono mt-0.5 truncate">
+              gemini-3.6-flash
+            </p>
+          </div>
+        </div>
+      </div>
+
       {/* Query Input Section */}
-      <div className="space-y-3">
+      <div className="space-y-2.5">
         <label htmlFor="agent-query" className="text-xs font-semibold text-slate-700 uppercase tracking-wider block">
-          Strategic Focus / Business Question
+          Strategic Focus / Business Objective
         </label>
-        <div className="flex flex-col sm:flex-row gap-2">
+        <div className="flex flex-col sm:flex-row gap-2.5">
           <input
             id="agent-query"
             type="text"
@@ -110,18 +167,18 @@ export default function MultiAgentWorkflow({
             onChange={(e) => setQuery(e.target.value)}
             placeholder="e.g. Which products are eroding margin? What actions should we take?"
             disabled={loading || !hasData}
-            className="flex-1 px-4 py-2.5 rounded-xl border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-purple-500/20 focus:border-purple-500 disabled:opacity-50"
+            className="flex-1 px-4 py-2.5 rounded-xl border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-600 disabled:opacity-50 transition-colors"
           />
           <button
             type="button"
             onClick={handleRunWorkflow}
             disabled={loading || !hasData || !datasetId}
-            className="inline-flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl bg-purple-600 hover:bg-purple-700 text-white text-sm font-semibold transition-colors shadow-sm disabled:opacity-50 disabled:cursor-not-allowed shrink-0"
+            className="inline-flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold transition-all shadow-xs hover:shadow-md disabled:opacity-50 disabled:cursor-not-allowed shrink-0"
           >
             {loading ? (
               <>
                 <Loader2 className="w-4 h-4 animate-spin" />
-                <span>Coordinating Agents...</span>
+                <span>Executing Workflow...</span>
               </>
             ) : (
               <>
@@ -144,7 +201,7 @@ export default function MultiAgentWorkflow({
         <div className="p-4 rounded-xl bg-rose-50 border border-rose-200 text-xs text-rose-700 flex items-start gap-2.5">
           <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
           <div>
-            <strong className="font-semibold block">Execution Error</strong>
+            <strong className="font-semibold block">Execution Notice</strong>
             <span>{error}</span>
           </div>
         </div>
@@ -159,7 +216,7 @@ export default function MultiAgentWorkflow({
               <button
                 type="button"
                 onClick={() => setActiveTab("report")}
-                className={`px-3 py-1.5 rounded-lg transition-colors ${
+                className={`px-3 py-1.5 rounded-lg transition-all ${
                   activeTab === "report" ? "bg-white text-slate-900 shadow-xs" : "text-slate-600 hover:text-slate-900"
                 }`}
               >
@@ -168,7 +225,7 @@ export default function MultiAgentWorkflow({
               <button
                 type="button"
                 onClick={() => setActiveTab("analytics")}
-                className={`px-3 py-1.5 rounded-lg transition-colors ${
+                className={`px-3 py-1.5 rounded-lg transition-all ${
                   activeTab === "analytics" ? "bg-white text-slate-900 shadow-xs" : "text-slate-600 hover:text-slate-900"
                 }`}
               >
@@ -177,7 +234,7 @@ export default function MultiAgentWorkflow({
               <button
                 type="button"
                 onClick={() => setActiveTab("risk")}
-                className={`px-3 py-1.5 rounded-lg transition-colors ${
+                className={`px-3 py-1.5 rounded-lg transition-all ${
                   activeTab === "risk" ? "bg-white text-slate-900 shadow-xs" : "text-slate-600 hover:text-slate-900"
                 }`}
               >
@@ -186,7 +243,7 @@ export default function MultiAgentWorkflow({
               <button
                 type="button"
                 onClick={() => setActiveTab("decision")}
-                className={`px-3 py-1.5 rounded-lg transition-colors ${
+                className={`px-3 py-1.5 rounded-lg transition-all ${
                   activeTab === "decision" ? "bg-white text-slate-900 shadow-xs" : "text-slate-600 hover:text-slate-900"
                 }`}
               >
@@ -206,12 +263,12 @@ export default function MultiAgentWorkflow({
           {/* TAB 1: Executive Report */}
           {activeTab === "report" && result.final_report && (
             <div className="space-y-4">
-              <div className="p-5 rounded-xl bg-gradient-to-r from-purple-50/70 to-blue-50/70 border border-purple-100 space-y-3">
+              <div className="p-5 rounded-xl bg-gradient-to-r from-blue-50/80 via-indigo-50/80 to-purple-50/80 border border-blue-200/70 space-y-3">
                 <div className="flex items-center justify-between">
-                  <span className="text-xs font-bold uppercase tracking-wider text-purple-700">
-                    Business Health Status
+                  <span className="text-xs font-bold uppercase tracking-wider text-blue-800">
+                    Business Health Assessment
                   </span>
-                  <span className="px-2.5 py-0.5 rounded-md text-xs font-bold bg-white text-purple-900 border border-purple-200">
+                  <span className="px-2.5 py-0.5 rounded-md text-xs font-bold bg-white text-blue-900 border border-blue-200">
                     {result.final_report.business_health_status}
                   </span>
                 </div>
@@ -228,7 +285,7 @@ export default function MultiAgentWorkflow({
                   </h4>
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                     {result.final_report.immediate_actions.map((act, i) => (
-                      <div key={i} className="p-4 rounded-xl border border-slate-200/80 bg-white space-y-1.5">
+                      <div key={i} className="p-4 rounded-xl border border-slate-200/80 bg-white space-y-1.5 shadow-2xs">
                         <div className="flex items-center justify-between">
                           <span className="text-xs font-bold text-slate-900">{act.action}</span>
                           <span className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase ${
@@ -348,7 +405,7 @@ export default function MultiAgentWorkflow({
                           <strong className="text-xs font-bold text-slate-900 block">{finding.risk_type}</strong>
                           <p className="text-xs text-slate-600 mt-0.5">{finding.description}</p>
                           {finding.recommended_action && (
-                            <p className="text-xs text-purple-700 font-medium mt-1">
+                            <p className="text-xs text-blue-700 font-medium mt-1">
                               Action: {finding.recommended_action}
                             </p>
                           )}
@@ -364,8 +421,8 @@ export default function MultiAgentWorkflow({
           {/* TAB 4: Decision Optimization */}
           {activeTab === "decision" && result.decision && (
             <div className="space-y-4">
-              <div className="p-4 rounded-xl bg-purple-50/60 border border-purple-200/70">
-                <span className="text-xs font-bold uppercase tracking-wider text-purple-700 block">
+              <div className="p-4 rounded-xl bg-indigo-50/60 border border-indigo-200/70">
+                <span className="text-xs font-bold uppercase tracking-wider text-indigo-700 block">
                   Recommended Core Strategy
                 </span>
                 <span className="text-base font-bold text-slate-900 mt-1 block">

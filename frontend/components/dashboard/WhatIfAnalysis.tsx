@@ -17,6 +17,7 @@ import {
   type BusinessMetrics,
   formatINR,
 } from "./types";
+import { api } from "@/lib/api";
 
 interface WhatIfAnalysisProps {
   currentMetrics: BusinessMetrics | null;
@@ -149,47 +150,14 @@ export default function WhatIfAnalysis({
     setIsLoading(true);
 
     try {
-      const response = await fetch(
-        `${API_BASE_URL}/what-if`,
-        {
-          method: "POST",
-          credentials: "include",
-          cache: "no-store",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            current_quantity: cq,
-            current_revenue: cr,
-            current_expense: ce,
-            new_quantity: nq,
-            new_revenue: nr,
-            new_expense: ne,
-          }),
-        }
-      );
-
-      if (response.status === 401) {
-        throw new Error(
-          "Your session has expired. Please log in again."
-        );
-      }
-
-      const data = await response
-        .json()
-        .catch(() => null);
-
-      if (!response.ok) {
-        const detail = data?.detail;
-
-        throw new Error(
-          typeof detail === "string"
-            ? detail
-            : typeof detail?.message === "string"
-              ? detail.message
-              : "Scenario simulation failed."
-        );
-      }
+      const data = await api.runWhatIf({
+        current_quantity: cq,
+        current_revenue: cr,
+        current_expense: ce,
+        new_quantity: nq,
+        new_revenue: nr,
+        new_expense: ne,
+      });
 
       if (
         data?.success !== true ||

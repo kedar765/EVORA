@@ -12,3 +12,4 @@ langchain-google-genai
 langchain-groq
 python-dotenv
 pytest
+xlrd>=2.0.1

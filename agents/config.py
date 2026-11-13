@@ -18,6 +18,13 @@ from typing import Any, Dict, Optional, Tuple
 
 from dotenv import load_dotenv
 
+# Inject system certificate store on Windows if truststore is available
+try:
+    import truststore
+    truststore.inject_into_ssl()
+except Exception:
+    pass
+
 # Ensure root .env is loaded
 _ROOT_DIR = Path(__file__).resolve().parent.parent
 _ENV_FILE = _ROOT_DIR / ".env"
@@ -32,12 +39,12 @@ logger = logging.getLogger("evora.config")
 # 1. Independent Default Model Identifiers
 # -----------------------------------------------------------------------------
 
-ANALYTICS_DEFAULT_MODEL = "gemini-3.5-flash-lite"
-RISK_DEFAULT_MODEL = "gemini-3.7-flash"
-DECISION_DEFAULT_MODEL = "gemini-3.1-pro-preview"
+ANALYTICS_DEFAULT_MODEL = "gemini-3.1-flash-lite"
+RISK_DEFAULT_MODEL = "gemini-3.5-flash"
+DECISION_DEFAULT_MODEL = "gemini-3.6-flash"
 
 # Default fallback models for Groq (optional secondary tier)
-GROQ_DEFAULT_MODEL = "llama-3.3-70b-versatile"
+GROQ_DEFAULT_MODEL = "openai/gpt-oss-120b"
 
 
 # -----------------------------------------------------------------------------
@@ -176,7 +183,7 @@ def create_gemini_chat_model(
     model_name: str,
     api_key: str,
     temperature: float = 0.1,
-    timeout: float = 25.0,
+    timeout: float = 20.0,
 ) -> Any:
     """
     Creates a ChatGoogleGenerativeAI instance targeting the v1beta API endpoint
