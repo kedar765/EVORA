@@ -12,7 +12,6 @@ import json
 from typing import Any, Dict, List, Optional
 
 import numpy as np
-import pandas as pd
 from langchain_core.tools import tool
 
 from tools.dataset_tools import DatasetAccessError, load_user_dataset

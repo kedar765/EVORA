@@ -24,7 +24,10 @@ from agents.config import (
     GROQ_DEFAULT_MODEL,
     ModelQuotaManager,
     create_gemini_chat_model,
+    create_groq_chat_model,
     get_decision_model,
+    get_groq_model,
+    resolve_active_gemini_model,
 )
 from schemas.agent_schemas import (
     DecisionAction,
@@ -34,16 +37,15 @@ from schemas.agent_schemas import (
 from tools.decision_tools import (
     DECISION_TOOLS,
     compare_business_strategies,
-    evaluate_decision_options,
     generate_action_plan,
-    optimize_resource_allocation,
-    simulate_business_scenario,
 )
 
 _ROOT_DIR = Path(__file__).resolve().parent.parent
 _ENV_FILE = _ROOT_DIR / ".env"
 if _ENV_FILE.exists():
     load_dotenv(dotenv_path=_ENV_FILE, override=False)
+else:
+    load_dotenv(override=False)
 
 logger = logging.getLogger("evora.decision_agent")
 
@@ -69,8 +71,8 @@ class DecisionOptimizationAgent:
         )
         self.groq_api_key = groq_api_key or os.getenv("GROQ_API_KEY")
         self.gemini_model = gemini_model or get_decision_model()
-        self.groq_model = groq_model or os.getenv("GROQ_MODEL", GROQ_DEFAULT_MODEL)
-        self.timeout = float(timeout or os.getenv("LLM_TIMEOUT") or 25.0)
+        self.groq_model = groq_model or get_groq_model()
+        self.timeout = float(timeout or os.getenv("LLM_TIMEOUT") or 15.0)
 
     def _number(self, value: Any, default: float = 0.0) -> float:
         try:
@@ -263,27 +265,27 @@ class DecisionOptimizationAgent:
         if os.getenv("EVORA_SKIP_EXTERNAL_LLM", "0") == "1":
             return DecisionToolCallingModel(agent_instance=self)
 
-        is_exhausted, _ = ModelQuotaManager.is_exhausted(self.gemini_model)
+        active_gemini_model = resolve_active_gemini_model(self.gemini_model)
+        is_exhausted, _ = ModelQuotaManager.is_exhausted(active_gemini_model)
         if not is_exhausted and self.gemini_api_key:
             try:
                 return create_gemini_chat_model(
-                    model_name=self.gemini_model,
+                    model_name=active_gemini_model,
                     api_key=self.gemini_api_key,
                     timeout=self.timeout,
                 )
             except Exception as e:
                 logger.warning(f"Failed to initialize ChatGoogleGenerativeAI for DecisionAgent: {e}")
                 if ModelQuotaManager.is_quota_error(e):
-                    ModelQuotaManager.mark_exhausted(self.gemini_model, str(e))
+                    ModelQuotaManager.mark_exhausted(active_gemini_model, str(e))
         elif is_exhausted:
-            logger.info("Decision Agent: Model %s is marked quota-exhausted; skipping direct LLM call.", self.gemini_model)
+            logger.info("Decision Agent: Model %s is marked quota-exhausted; skipping direct LLM call.", active_gemini_model)
 
         if self.groq_api_key:
             try:
-                from langchain_groq import ChatGroq
-                return ChatGroq(
-                    model=self.groq_model,
-                    groq_api_key=self.groq_api_key,
+                return create_groq_chat_model(
+                    model_name=self.groq_model,
+                    api_key=self.groq_api_key,
                     temperature=0.1,
                     timeout=self.timeout,
                 )
@@ -343,11 +345,12 @@ class DecisionOptimizationAgent:
         )
 
         # 1. Execute actual LangChain agent
-        model_used = self.gemini_model
+        active_gemini_model = resolve_active_gemini_model(self.gemini_model)
+        model_used = active_gemini_model
         execution_mode = "llm"
         model_error: Optional[str] = None
 
-        is_exhausted, exhaust_reason = ModelQuotaManager.is_exhausted(self.gemini_model)
+        is_exhausted, exhaust_reason = ModelQuotaManager.is_exhausted(active_gemini_model)
         if is_exhausted or os.getenv("EVORA_SKIP_EXTERNAL_LLM", "0") == "1":
             execution_mode = "deterministic_fallback"
             model_used = f"deterministic_fallback (requested: {self.gemini_model})"
@@ -360,20 +363,19 @@ class DecisionOptimizationAgent:
             try:
                 res = agent.invoke({"messages": [HumanMessage(content=prompt)]})
                 execution_mode = "llm"
-                model_used = self.gemini_model
+                model_used = active_gemini_model
             except Exception as e:
                 model_error = str(e)
-                logger.warning(f"Primary LangChain decision agent ({self.gemini_model}) invocation failed ({e}); checking fallback.")
+                logger.warning(f"Primary LangChain decision agent ({active_gemini_model}) invocation failed ({e}); checking fallback.")
                 if ModelQuotaManager.is_quota_error(e):
-                    ModelQuotaManager.mark_exhausted(self.gemini_model, str(e))
+                    ModelQuotaManager.mark_exhausted(active_gemini_model, str(e))
 
                 groq_succeeded = False
                 if self.groq_api_key:
                     try:
-                        from langchain_groq import ChatGroq
-                        groq_llm = ChatGroq(
-                            model=self.groq_model,
-                            groq_api_key=self.groq_api_key,
+                        groq_llm = create_groq_chat_model(
+                            model_name=self.groq_model,
+                            api_key=self.groq_api_key,
                             temperature=0.1,
                             timeout=self.timeout,
                         )

@@ -82,11 +82,19 @@ export default function RevenueExpenseChart({
     const records = fullDataset.records;
     const headers = fullDataset.headers;
 
-    // Detect column names
-    const dateCol = headers.find((h) => /^date|timestamp|day|time$/i.test(h.trim()));
-    const productCol = headers.find((h) => /^product|category|item|service|segment$/i.test(h.trim()));
-    const revCol = headers.find((h) => /^revenue|sales|income$/i.test(h.trim())) || "Revenue";
-    const expCol = headers.find((h) => /^expense|cost|expenditure$/i.test(h.trim())) || "Expense";
+    // Detect column names with prioritized canonical matches (never confuse Unit_Cost with Expense)
+    const dateCol = headers.find((h) => /^(date|timestamp|day|time)$/i.test(h.trim()));
+    const productCol = headers.find((h) => /^(product|category|item|service|segment)$/i.test(h.trim()));
+    const revCol =
+      headers.find((h) => /^(total[_\s]?)?revenue$/i.test(h.trim())) ||
+      headers.find((h) => /^(total[_\s]?)?sales$/i.test(h.trim())) ||
+      headers.find((h) => /^(amount|income|turnover)$/i.test(h.trim())) ||
+      "Revenue";
+    const expCol =
+      headers.find((h) => /^(total[_\s]?)?expense(s)?$/i.test(h.trim())) ||
+      headers.find((h) => /^(total[_\s]?)?cost(s)?$/i.test(h.trim()) && !/unit|per|rate/i.test(h.trim())) ||
+      headers.find((h) => /^(expenditure|cogs)$/i.test(h.trim())) ||
+      "Expense";
 
     const hasValidDates =
       dateCol &&

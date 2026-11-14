@@ -33,6 +33,10 @@ export interface ForecastNextDayResponse {
     r2: number;
   };
   status: string;
+  dataset_id?: string;
+  filename?: string;
+  analysis_id?: string;
+  created_at?: number;
 }
 
 export interface DecisionRecommendationRequest {
@@ -139,6 +143,7 @@ export interface WhatIfRequest {
   new_quantity: number;
   new_revenue: number;
   new_expense: number;
+  dataset_id?: string;
 }
 
 export interface WhatIfResponse {
@@ -149,6 +154,26 @@ export interface WhatIfResponse {
   result: string;
   analysis_id?: string;
   created_at?: number;
+  aggregate_analysis?: {
+    current_revenue: number;
+    current_expense: number;
+    current_profit: number;
+    current_margin: number;
+    target_revenue: number;
+    target_expense: number;
+    proposed_profit: number;
+    proposed_margin: number;
+    profit_delta: number;
+    margin_delta: number;
+    percentage_profit_improvement: number;
+  };
+  forecast_comparison?: {
+    horizon: string;
+    days_in_period: number;
+    baseline_daily_profit: number;
+    proposed_daily_profit: number;
+    daily_profit_delta: number;
+  };
 }
 
 export interface ProfitPredictionRequest {
@@ -417,8 +442,11 @@ export const api = {
     );
   },
 
-  getForecastNextDay: async (): Promise<ForecastNextDayResponse> => {
-    return request<ForecastNextDayResponse>("/forecast/next-day", {
+  getForecastNextDay: async (datasetId?: string): Promise<ForecastNextDayResponse> => {
+    const endpoint = datasetId
+      ? `/forecast/next-day?dataset_id=${encodeURIComponent(datasetId)}`
+      : "/forecast/next-day";
+    return request<ForecastNextDayResponse>(endpoint, {
       method: "GET",
     });
   },

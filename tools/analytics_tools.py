@@ -9,7 +9,7 @@ and product performance from real user datasets.
 from __future__ import annotations
 
 import json
-from typing import Any, Dict, List, Optional
+from typing import Optional
 
 import numpy as np
 import pandas as pd
@@ -66,12 +66,12 @@ def calculate_business_metrics(dataset_id: str, user_id: str) -> str:
 
         revenue_series = pd.to_numeric(df["Revenue"], errors="coerce").fillna(0.0)
         expense_series = pd.to_numeric(df["Expense"], errors="coerce").fillna(0.0)
-        profit_series = pd.to_numeric(df["Profit"], errors="coerce").fillna(revenue_series - expense_series)
+        profit_series = revenue_series - expense_series
 
         total_revenue = float(revenue_series.sum())
         total_expense = float(expense_series.sum())
-        total_profit = float(profit_series.sum())
-        profit_margin = (total_profit / total_revenue * 100) if total_revenue != 0 else 0.0
+        total_profit = round(total_revenue - total_expense, 2)
+        profit_margin = round((total_profit / total_revenue * 100.0), 2) if total_revenue != 0 else 0.0
 
         quantity_series = pd.to_numeric(df.get("Quantity", pd.Series(1.0, index=df.index)), errors="coerce").fillna(1.0)
         total_quantity = float(quantity_series.sum())

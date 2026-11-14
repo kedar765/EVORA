@@ -12,20 +12,26 @@ import logging
 import os
 import threading
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
 
+import certifi
 from dotenv import load_dotenv
 
-# Inject system certificate store on Windows if truststore is available
+# Configure Windows certificate verification using truststore and certifi CA bundle
 try:
     import truststore
     truststore.inject_into_ssl()
 except Exception:
     pass
 
-# Ensure root .env is loaded
+if "SSL_CERT_FILE" not in os.environ:
+    os.environ["SSL_CERT_FILE"] = certifi.where()
+if "REQUESTS_CA_BUNDLE" not in os.environ:
+    os.environ["REQUESTS_CA_BUNDLE"] = certifi.where()
+
+# Load root .env without overriding system/deployment environment variables (override=False preserves deployment precedence)
 _ROOT_DIR = Path(__file__).resolve().parent.parent
 _ENV_FILE = _ROOT_DIR / ".env"
 if _ENV_FILE.exists():
@@ -36,12 +42,13 @@ else:
 logger = logging.getLogger("evora.config")
 
 # -----------------------------------------------------------------------------
-# 1. Independent Default Model Identifiers
+# 1. Independent Default Model Identifiers (Gemini 4 Family)
 # -----------------------------------------------------------------------------
 
-ANALYTICS_DEFAULT_MODEL = "gemini-3.1-flash-lite"
-RISK_DEFAULT_MODEL = "gemini-3.5-flash"
-DECISION_DEFAULT_MODEL = "gemini-3.6-flash"
+SAFE_GEMINI_4_DEFAULT = "gemini-4-hydrogen"
+ANALYTICS_DEFAULT_MODEL = "gemini-4-hydrogen"
+RISK_DEFAULT_MODEL = "gemini-4-carbon"
+DECISION_DEFAULT_MODEL = "gemini-4-argon"
 
 # Default fallback models for Groq (optional secondary tier)
 GROQ_DEFAULT_MODEL = "openai/gpt-oss-120b"
@@ -76,6 +83,30 @@ def get_decision_model() -> str:
         or os.getenv("GEMINI_DECISION_MODEL")
         or DECISION_DEFAULT_MODEL
     ).strip()
+
+
+def resolve_active_gemini_model(model_name: str) -> str:
+    """
+    Resolves the active Gemini model identifier.
+    If Carbon or Argon are requested but unavailable (e.g. Free Tier limit 0 or marked exhausted),
+    returns the safe default Gemini 4 model (gemini-4-hydrogen).
+    """
+    clean_model = (model_name or SAFE_GEMINI_4_DEFAULT).strip()
+    is_exhausted, _ = ModelQuotaManager.is_exhausted(clean_model)
+    if is_exhausted and clean_model in {"gemini-4-carbon", "gemini-4-argon"}:
+        return SAFE_GEMINI_4_DEFAULT
+    return clean_model
+
+
+def get_groq_model() -> str:
+    """
+    Returns the configured Groq model ID, normalizing deprecated or removed model IDs
+    (e.g. legacy llama-3.1-70b-versatile which was deprecated on Groq).
+    """
+    raw_model = (os.getenv("GROQ_MODEL") or GROQ_DEFAULT_MODEL).strip()
+    if "llama-3.1" in raw_model.lower():
+        return GROQ_DEFAULT_MODEL
+    return raw_model
 
 
 # -----------------------------------------------------------------------------
@@ -164,7 +195,7 @@ class ModelQuotaManager:
 
     @staticmethod
     def is_quota_error(error: Exception | str) -> bool:
-        """Determines if an exception or error string represents a quota or rate-limit error."""
+        """Determines if an exception or error string represents a quota, rate-limit, or service exhaustion error."""
         msg = str(error).upper()
         return (
             "RESOURCE_EXHAUSTED" in msg
@@ -172,22 +203,30 @@ class ModelQuotaManager:
             or "QUOTA EXCEEDED" in msg
             or "RATE LIMIT" in msg
             or "RATELIMIT" in msg
+            or "503" in msg
+            or "UNAVAILABLE" in msg
+            or "HIGH DEMAND" in msg
+            or "504" in msg
+            or "DEADLINE_EXCEEDED" in msg
+            or "DEADLINE EXPIRED" in msg
+            or "TIMED OUT" in msg
+            or "TIMEOUT" in msg
         )
 
 
 # -----------------------------------------------------------------------------
-# 4. LLM Factory Helper
+# 4. LLM Factory Helpers
 # -----------------------------------------------------------------------------
 
 def create_gemini_chat_model(
     model_name: str,
     api_key: str,
     temperature: float = 0.1,
-    timeout: float = 20.0,
+    timeout: float = 15.0,
 ) -> Any:
     """
     Creates a ChatGoogleGenerativeAI instance targeting the v1beta API endpoint
-    required for preview and latest generation models (e.g. gemini-3.1-pro-preview).
+    required for preview and latest generation models.
     """
     from langchain_google_genai import ChatGoogleGenerativeAI
 
@@ -197,4 +236,38 @@ def create_gemini_chat_model(
         temperature=temperature,
         timeout=timeout,
         api_version="v1beta",
+    )
+
+
+def create_groq_chat_model(
+    model_name: Optional[str] = None,
+    api_key: Optional[str] = None,
+    temperature: float = 0.1,
+    timeout: float = 15.0,
+) -> Any:
+    """
+    Creates a resilient ChatGroq instance with valid TLS certificate verification
+    using the certifi trusted CA bundle and normalizes deprecated model names.
+    """
+    import ssl
+    import certifi
+    import httpx
+    from langchain_groq import ChatGroq
+
+    model = model_name or get_groq_model()
+    if "llama-3.1" in str(model).lower():
+        model = GROQ_DEFAULT_MODEL
+
+    key = api_key or os.getenv("GROQ_API_KEY")
+
+    # Secure HTTP client with trusted CA certificate verification
+    ssl_context = ssl.create_default_context(cafile=certifi.where())
+    http_client = httpx.Client(verify=ssl_context, timeout=timeout)
+
+    return ChatGroq(
+        model=model,
+        groq_api_key=key,
+        temperature=temperature,
+        timeout=timeout,
+        http_client=http_client,
     )

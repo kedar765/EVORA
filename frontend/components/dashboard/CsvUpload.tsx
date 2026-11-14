@@ -8,7 +8,6 @@ import {
   CheckCircle2,
   AlertCircle,
   RefreshCw,
-  Sparkles,
   Info,
 } from "lucide-react";
 
@@ -33,13 +32,6 @@ interface ApiErrorResponse {
 const API_BASE_URL =
   process.env.NEXT_PUBLIC_API_URL ||
   "http://localhost:8000";
-
-const SAMPLE_CSV = `Date,Product,Quantity,Revenue,Expense,Customer
-2026-08-01,Product A,100,20000,12000,Customer 1
-2026-08-02,Product B,150,30000,18000,Customer 2
-2026-08-03,Product C,200,40000,25000,Customer 3
-2026-08-04,Product A,120,24000,15000,Customer 4
-2026-08-05,Product B,140,28000,17000,Customer 5`;
 
 function getErrorMessage(
   response: ApiErrorResponse | null
@@ -192,17 +184,6 @@ export default function CsvUpload({
     void uploadFileToServer(selectedFile);
   };
 
-  const handleLoadSample = (): void => {
-    const demoFile = new File(
-      [SAMPLE_CSV],
-      "sample_business_data.csv",
-      { type: "text/csv" }
-    );
-
-    setSelectedFile(demoFile);
-    void uploadFileToServer(demoFile);
-  };
-
   return (
     <div className="bg-white rounded-2xl border border-slate-200/90 shadow-sm p-6 sm:p-7 transition-all">
       <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4 mb-6">
@@ -213,7 +194,7 @@ export default function CsvUpload({
             </span>
 
             <span className="text-xs font-bold uppercase tracking-wider text-blue-700">
-              CSV Ingestion
+              Dataset Ingestion
             </span>
           </div>
 
@@ -222,22 +203,11 @@ export default function CsvUpload({
           </h2>
 
           <p className="text-sm text-slate-500 mt-1 max-w-2xl">
-            Upload a CSV file containing Quantity, Revenue,
-            and Expense columns to analyze business
-            performance, predictions, and risks.
+            Upload a CSV or Excel dataset containing business metrics
+            such as Quantity, Revenue, and Expense to feed multi-agent intelligence,
+            predictions, and risk diagnosis.
           </p>
         </div>
-
-        <button
-          type="button"
-          onClick={handleLoadSample}
-          disabled={isLoading}
-          className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold transition-colors border border-slate-200/90 disabled:opacity-50 disabled:cursor-not-allowed"
-          title="Load demonstration data"
-        >
-          <Sparkles className="w-3.5 h-3.5 text-blue-600" />
-          Load Demo Data
-        </button>
       </div>
 
       {activeFilename ? (
@@ -268,9 +238,8 @@ export default function CsvUpload({
           <Info className="w-4 h-4 text-slate-400 shrink-0" />
 
           <span>
-            No file uploaded yet. Select a CSV file
-            containing Quantity, Revenue, and Expense,
-            or load demonstration data.
+            No file uploaded yet. Select a CSV or Excel dataset (.csv, .xlsx, .xls)
+            to populate analytics, forecasting, and multi-agent intelligence.
           </span>
         </div>
       )}

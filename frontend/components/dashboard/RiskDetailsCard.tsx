@@ -47,18 +47,38 @@ export default function RiskDetailsCard({
   // Identify flagged records from the actual dataset
   const records = fullDataset?.records || [];
   const headers = fullDataset?.headers || [];
-  const dateCol = headers.find((h) => /^date|timestamp|day$/i.test(h.trim()));
-  const productCol = headers.find((h) => /^product|category|item$/i.test(h.trim()));
-  const revCol = headers.find((h) => /^revenue|sales$/i.test(h.trim())) || "Revenue";
-  const expCol = headers.find((h) => /^expense|cost$/i.test(h.trim())) || "Expense";
-  const qtyCol = headers.find((h) => /^quantity|units$/i.test(h.trim())) || "Quantity";
+  const dateCol = headers.find((h) => /^(date|timestamp|day|time)$/i.test(h.trim()));
+  const productCol = headers.find((h) => /^(product|category|item|sku|service)$/i.test(h.trim()));
+
+  // Exact & prioritized canonical financial column detection - never map Unit_Cost to Expense
+  const revCol =
+    headers.find((h) => /^(total[_\s]?)?revenue$/i.test(h.trim())) ||
+    headers.find((h) => /^(total[_\s]?)?sales$/i.test(h.trim())) ||
+    headers.find((h) => /^(amount|income|turnover)$/i.test(h.trim())) ||
+    "Revenue";
+
+  const expCol =
+    headers.find((h) => /^(total[_\s]?)?expense(s)?$/i.test(h.trim())) ||
+    headers.find((h) => /^(total[_\s]?)?cost(s)?$/i.test(h.trim()) && !/unit|per|rate/i.test(h.trim())) ||
+    headers.find((h) => /^(expenditure|cogs)$/i.test(h.trim())) ||
+    "Expense";
+
+  const profitCol =
+    headers.find((h) => /^(net[_\s]?)?profit$/i.test(h.trim()) && !/margin|pct|percent/i.test(h.trim())) ||
+    "Profit";
+
+  const qtyCol =
+    headers.find((h) => /^(quantity|qty|units([_\s]?sold)?|orders)$/i.test(h.trim())) ||
+    "Quantity";
 
   const flaggedRows = records
     .map((row, idx) => {
       const isAnomaly = anomalyIndices.includes(idx);
       const rev = Number(row[revCol]) || 0;
       const exp = Number(row[expCol]) || 0;
-      const isLoss = rev < exp;
+      const rawProfit = row[profitCol] !== undefined ? Number(row[profitCol]) : NaN;
+      const profit = !isNaN(rawProfit) ? rawProfit : rev - exp;
+      const isLoss = profit < 0 || rev < exp;
 
       if (isAnomaly || isLoss) {
         return {
@@ -67,7 +87,7 @@ export default function RiskDetailsCard({
           quantity: row[qtyCol] ?? "—",
           revenue: rev,
           expense: exp,
-          profit: rev - exp,
+          profit: profit,
           reason: isAnomaly && isLoss
             ? "Isolation Forest Outlier & Operating Loss"
             : isAnomaly

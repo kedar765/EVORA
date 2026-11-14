@@ -16,8 +16,6 @@ Security & Validation Rules:
 
 from __future__ import annotations
 
-import json
-import math
 import os
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -35,13 +33,21 @@ COLUMN_CANDIDATES = {
         "revenue", "sales", "total sales", "net sales", "total revenue",
         "gross revenue", "gross sales", "turnover", "income", "amount"
     ],
+    "unit_price": [
+        "unit price", "unit_price", "price per unit", "price_per_unit", "selling price", "retail price"
+    ],
     "expense": [
-        "expense", "expenses", "cost", "costs", "total cost", "total expense",
-        "expenditure", "spending"
+        "expense", "expenses", "cost", "costs", "total cost", "total expense", "total expenses",
+        "cogs", "cost of goods sold", "expenditure", "spending", "operating cost"
+    ],
+    "unit_cost": [
+        "unit cost", "unit_cost", "cost per unit", "cost_per_unit", "cpc", "unit expense"
     ],
     "profit": [
-        "profit", "net profit", "operating profit", "gross profit", "earnings",
-        "margin"
+        "profit", "net profit", "operating profit", "gross profit", "earnings", "net income"
+    ],
+    "profit_margin": [
+        "profit margin", "profit_margin", "margin", "margin %", "operating margin", "gross margin"
     ],
     "quantity": [
         "quantity", "qty", "volume", "units", "units sold", "orders",
@@ -124,29 +130,35 @@ def resolve_safe_dataset_path(storage_path_str: str) -> Path:
 def identify_semantic_columns(columns: List[str]) -> Dict[str, str]:
     """
     Conservatively maps dataset columns to standardized semantic business roles.
+    Distinguishes total Revenue from Unit Price, and total Expense from Unit Cost.
     Returns mapping: {standard_name: actual_dataset_column}
     """
     mapping: Dict[str, str] = {}
     normalized_cols = {col: col.strip().lower() for col in columns}
 
+    # 1. Exact match check first for all categories (checking both snake_case and spaced forms)
     for standard_name, candidates in COLUMN_CANDIDATES.items():
-        matched_actual: Optional[str] = None
-
-        # 1. Exact match check
+        candidate_set = set(candidates) | {c.replace(" ", "_") for c in candidates} | {c.replace("_", " ") for c in candidates}
         for actual, norm in normalized_cols.items():
-            if norm in candidates:
-                matched_actual = actual
+            norm_space = norm.replace("_", " ").strip()
+            if norm in candidate_set or norm_space in candidate_set:
+                mapping[standard_name] = actual
                 break
 
-        # 2. Substring match check if not matched yet
-        if matched_actual is None:
-            for actual, norm in normalized_cols.items():
-                if any(cand == norm or f" {cand}" in norm or f"{cand} " in norm for cand in candidates):
-                    matched_actual = actual
-                    break
-
-        if matched_actual is not None:
-            mapping[standard_name] = matched_actual
+    # 2. Substring match check for unmatched categories
+    for standard_name, candidates in COLUMN_CANDIDATES.items():
+        if standard_name in mapping:
+            continue
+        candidate_set = set(candidates) | {c.replace(" ", "_") for c in candidates} | {c.replace("_", " ") for c in candidates}
+        for actual, norm in normalized_cols.items():
+            norm_space = norm.replace("_", " ").strip()
+            # Avoid assigning a unit cost/price column as total expense/revenue
+            if standard_name in {"revenue", "expense"}:
+                if any(unit_word in norm_space for unit_word in ["per unit", "unit cost", "unit price", "cost per", "price per", "rate"]):
+                    continue
+            if any(cand == norm or cand == norm_space or f" {cand}" in norm_space or f"{cand} " in norm_space for cand in candidate_set):
+                mapping[standard_name] = actual
+                break
 
     return mapping
 
@@ -166,6 +178,7 @@ def _clean_numeric_series(series: pd.Series, default: float = 0.0) -> pd.Series:
 def sanitize_dataframe(df: pd.DataFrame, semantic_mapping: Dict[str, str]) -> pd.DataFrame:
     """
     Sanitizes values, standardizes types, handles missing data, and creates canonical columns.
+    Ensures unit costs are not confused with total expenses, and profit is not confused with profit margin.
     Avoids converting missing values into literal 'nan' strings.
     """
     clean_df = df.copy()
@@ -175,22 +188,39 @@ def sanitize_dataframe(df: pd.DataFrame, semantic_mapping: Dict[str, str]) -> pd
     if len(clean_df.columns) != len(set(clean_df.columns)):
         clean_df = clean_df.loc[:, ~clean_df.columns.duplicated(keep="first")]
 
-    # Normalize canonical columns based on semantic mapping
+    # Normalize Quantity first (needed if calculating totals from unit rates)
+    if "quantity" in semantic_mapping:
+        clean_df["Quantity"] = _clean_numeric_series(
+            clean_df[semantic_mapping["quantity"]], 1.0
+        )
+    elif "Quantity" not in clean_df.columns:
+        clean_df["Quantity"] = 1.0
+
+    # Normalize canonical Revenue
     if "revenue" in semantic_mapping:
         clean_df["Revenue"] = _clean_numeric_series(
             clean_df[semantic_mapping["revenue"]], 0.0
         )
     elif "Revenue" not in clean_df.columns:
-        clean_df["Revenue"] = 0.0
+        if "unit_price" in semantic_mapping:
+            unit_p = _clean_numeric_series(clean_df[semantic_mapping["unit_price"]], 0.0)
+            clean_df["Revenue"] = clean_df["Quantity"] * unit_p
+        else:
+            clean_df["Revenue"] = 0.0
 
+    # Normalize canonical Expense
     if "expense" in semantic_mapping:
         clean_df["Expense"] = _clean_numeric_series(
             clean_df[semantic_mapping["expense"]], 0.0
         )
     elif "Expense" not in clean_df.columns:
-        clean_df["Expense"] = 0.0
+        if "unit_cost" in semantic_mapping:
+            unit_c = _clean_numeric_series(clean_df[semantic_mapping["unit_cost"]], 0.0)
+            clean_df["Expense"] = clean_df["Quantity"] * unit_c
+        else:
+            clean_df["Expense"] = 0.0
 
-    # Ensure Profit exists and is consistent
+    # Ensure Profit exists and is strictly currency amount (Revenue - Expense), never a percentage margin
     if "profit" in semantic_mapping and semantic_mapping["profit"] in clean_df.columns:
         clean_df["Profit"] = _clean_numeric_series(
             clean_df[semantic_mapping["profit"]], 0.0
@@ -198,13 +228,17 @@ def sanitize_dataframe(df: pd.DataFrame, semantic_mapping: Dict[str, str]) -> pd
     else:
         clean_df["Profit"] = clean_df["Revenue"] - clean_df["Expense"]
 
-    # Normalize Quantity
-    if "quantity" in semantic_mapping:
-        clean_df["Quantity"] = _clean_numeric_series(
-            clean_df[semantic_mapping["quantity"]], 1.0
+    # Calculate or normalize Profit Margin (%)
+    if "profit_margin" in semantic_mapping and semantic_mapping["profit_margin"] in clean_df.columns:
+        clean_df["Profit_Margin"] = _clean_numeric_series(
+            clean_df[semantic_mapping["profit_margin"]], 0.0
         )
-    elif "Quantity" not in clean_df.columns:
-        clean_df["Quantity"] = 1.0
+    else:
+        clean_df["Profit_Margin"] = np.where(
+            clean_df["Revenue"] > 0,
+            (clean_df["Profit"] / clean_df["Revenue"]) * 100.0,
+            0.0,
+        )
 
     # Normalize Date
     if "date" in semantic_mapping:
@@ -216,7 +250,7 @@ def sanitize_dataframe(df: pd.DataFrame, semantic_mapping: Dict[str, str]) -> pd
 
     # Normalize Product (avoid literal 'nan' strings)
     if "product" in semantic_mapping:
-        raw_prod = clean_df[semantic_mapping["product"]].fillna("Unknown").astype(str)
+        raw_prod = clean_df[semantic_mapping["product"]].fillna("Unknown").astype(str).str.strip()
         clean_df["Product"] = raw_prod.replace(
             {"nan": "Unknown", "None": "Unknown", "null": "Unknown", "": "Unknown"}
         )
@@ -225,14 +259,14 @@ def sanitize_dataframe(df: pd.DataFrame, semantic_mapping: Dict[str, str]) -> pd
 
     # Normalize Category (avoid literal 'nan' strings)
     if "category" in semantic_mapping:
-        raw_cat = clean_df[semantic_mapping["category"]].fillna("General").astype(str)
+        raw_cat = clean_df[semantic_mapping["category"]].fillna("General").astype(str).str.strip()
         clean_df["Category"] = raw_cat.replace(
             {"nan": "General", "None": "General", "null": "General", "": "General"}
         )
 
     # Normalize Region (avoid literal 'nan' strings)
     if "region" in semantic_mapping:
-        raw_reg = clean_df[semantic_mapping["region"]].fillna("All Regions").astype(str)
+        raw_reg = clean_df[semantic_mapping["region"]].fillna("All Regions").astype(str).str.strip()
         clean_df["Region"] = raw_reg.replace(
             {"nan": "All Regions", "None": "All Regions", "null": "All Regions", "": "All Regions"}
         )

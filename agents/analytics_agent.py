@@ -27,10 +27,12 @@ from agents.config import (
     GROQ_DEFAULT_MODEL,
     ModelQuotaManager,
     create_gemini_chat_model,
+    create_groq_chat_model,
     get_analytics_model,
+    get_groq_model,
 )
 
-# Load environment configuration from workspace root if present
+# Load environment configuration from workspace root if present (override=False preserves deployment precedence)
 _ROOT_DIR = Path(__file__).resolve().parent.parent
 _ENV_FILE = _ROOT_DIR / ".env"
 if _ENV_FILE.exists():
@@ -76,7 +78,7 @@ class AnalyticsAgent:
             or os.getenv("GROQ_API_KEY")
         )
         self.gemini_model = gemini_model or get_analytics_model()
-        self.groq_model = groq_model or os.getenv("GROQ_MODEL", GROQ_DEFAULT_MODEL)
+        self.groq_model = groq_model or get_groq_model()
         
         env_timeout = os.getenv("LLM_TIMEOUT")
         if timeout is not None:
@@ -84,7 +86,7 @@ class AnalyticsAgent:
         elif env_timeout:
             self.timeout = float(env_timeout)
         else:
-            self.timeout = 25.0
+            self.timeout = 15.0
 
     # -------------------------------------------------------------------------
     # 1. Deterministic Financial Metrics (Pure Pandas - Never LLM)
@@ -451,13 +453,10 @@ class AnalyticsAgent:
         )
 
         try:
-            from langchain_groq import ChatGroq
-
-            llm = ChatGroq(
-                model=self.groq_model,
+            llm = create_groq_chat_model(
+                model_name=self.groq_model,
                 api_key=self.groq_api_key,
                 temperature=0.2,
-                max_tokens=800,
                 timeout=self.timeout,
             )
 
@@ -600,10 +599,9 @@ class AnalyticsAgent:
 
         if self.groq_api_key:
             try:
-                from langchain_groq import ChatGroq
-                return ChatGroq(
-                    model=self.groq_model,
-                    groq_api_key=self.groq_api_key,
+                return create_groq_chat_model(
+                    model_name=self.groq_model,
+                    api_key=self.groq_api_key,
                     temperature=0.1,
                     timeout=self.timeout,
                 )
@@ -696,10 +694,9 @@ class AnalyticsAgent:
                 groq_succeeded = False
                 if self.groq_api_key:
                     try:
-                        from langchain_groq import ChatGroq
-                        groq_llm = ChatGroq(
-                            model=self.groq_model,
-                            groq_api_key=self.groq_api_key,
+                        groq_llm = create_groq_chat_model(
+                            model_name=self.groq_model,
+                            api_key=self.groq_api_key,
                             temperature=0.1,
                             timeout=self.timeout,
                         )

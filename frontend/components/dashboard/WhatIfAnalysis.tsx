@@ -16,11 +16,14 @@ import {
   type WhatIfResult,
   type BusinessMetrics,
   formatINR,
+  formatPercent,
 } from "./types";
 import { api } from "@/lib/api";
+import { useDashboard } from "./DashboardContext";
 
 interface WhatIfAnalysisProps {
   currentMetrics: BusinessMetrics | null;
+  datasetId?: string;
   onResult?: (result: WhatIfResult | null) => void;
 }
 
@@ -30,8 +33,12 @@ const API_BASE_URL =
 
 export default function WhatIfAnalysis({
   currentMetrics,
+  datasetId,
   onResult,
 }: WhatIfAnalysisProps) {
+  const { uploadResult } = useDashboard();
+  const effectiveDatasetId = datasetId || uploadResult?.dataset_id;
+
   const [currentQuantity, setCurrentQuantity] = useState("");
   const [currentRevenue, setCurrentRevenue] = useState("");
   const [currentExpense, setCurrentExpense] = useState("");
@@ -157,6 +164,7 @@ export default function WhatIfAnalysis({
         new_quantity: nq,
         new_revenue: nr,
         new_expense: ne,
+        dataset_id: effectiveDatasetId,
       });
 
       if (
@@ -467,7 +475,7 @@ export default function WhatIfAnalysis({
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3.5">
             <div className="rounded-xl bg-white p-4 border border-slate-200 shadow-xs">
               <span className="text-xs font-semibold text-slate-500 block">
-                Current Predicted Profit
+                Current Profit (Baseline)
               </span>
 
               <span className="text-xl font-black text-slate-900 mt-1 block tracking-tight">
@@ -478,12 +486,15 @@ export default function WhatIfAnalysis({
 
               <span className="text-[10px] text-slate-400 mt-1 block">
                 Scenario A Baseline
+                {result.aggregate_analysis
+                  ? ` • ${formatPercent(result.aggregate_analysis.current_margin)} margin`
+                  : ""}
               </span>
             </div>
 
             <div className="rounded-xl bg-white p-4 border border-blue-200 shadow-xs">
               <span className="text-xs font-semibold text-blue-700 block">
-                Proposed Predicted Profit
+                Proposed Profit (Scenario)
               </span>
 
               <span className="text-xl font-black text-blue-900 mt-1 block tracking-tight">
@@ -494,6 +505,9 @@ export default function WhatIfAnalysis({
 
               <span className="text-[10px] text-blue-500 mt-1 block">
                 Scenario B Target
+                {result.aggregate_analysis
+                  ? ` • ${formatPercent(result.aggregate_analysis.proposed_margin)} margin`
+                  : ""}
               </span>
             </div>
 
@@ -519,10 +533,48 @@ export default function WhatIfAnalysis({
               </span>
 
               <span className="text-[10px] text-slate-400 mt-1 block">
-                Estimated difference
+                {result.aggregate_analysis?.percentage_profit_improvement !== undefined
+                  ? `${result.aggregate_analysis.percentage_profit_improvement >= 0 ? "+" : ""}${result.aggregate_analysis.percentage_profit_improvement.toFixed(2)}% net change`
+                  : "Estimated difference"}
               </span>
             </div>
           </div>
+
+          {result.forecast_comparison && (
+            <div className="rounded-xl bg-indigo-50/60 border border-indigo-100 p-4">
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-xs font-bold text-indigo-900 uppercase tracking-wider">
+                  ML Prediction Comparison • Horizon: {result.forecast_comparison.horizon}
+                </span>
+                <span className="text-[10px] font-semibold text-indigo-700 bg-white px-2 py-0.5 rounded border border-indigo-200">
+                  {result.forecast_comparison.days_in_period} Days Modeled
+                </span>
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs mt-3">
+                <div className="p-2.5 rounded-lg bg-white border border-indigo-100">
+                  <span className="text-[11px] text-slate-500 block">Baseline Daily Forecast</span>
+                  <span className="text-sm font-bold text-slate-800 mt-0.5 block">
+                    {formatINR(result.forecast_comparison.baseline_daily_profit)} / day
+                  </span>
+                </div>
+                <div className="p-2.5 rounded-lg bg-white border border-indigo-100">
+                  <span className="text-[11px] text-indigo-700 block">Proposed Daily Forecast</span>
+                  <span className="text-sm font-bold text-indigo-950 mt-0.5 block">
+                    {formatINR(result.forecast_comparison.proposed_daily_profit)} / day
+                  </span>
+                </div>
+                <div className="p-2.5 rounded-lg bg-white border border-indigo-100">
+                  <span className="text-[11px] text-slate-500 block">Daily Forecast Delta</span>
+                  <span className={`text-sm font-bold mt-0.5 block ${
+                    result.forecast_comparison.daily_profit_delta >= 0 ? "text-emerald-700" : "text-rose-700"
+                  }`}>
+                    {result.forecast_comparison.daily_profit_delta >= 0 ? "+" : ""}
+                    {formatINR(result.forecast_comparison.daily_profit_delta)} / day
+                  </span>
+                </div>
+              </div>
+            </div>
+          )}
 
           <div className="flex items-start gap-2.5 pt-3 text-xs text-slate-600 border-t border-slate-200/70">
             <ShieldCheck className="w-4 h-4 text-slate-500 shrink-0 mt-0.5" />

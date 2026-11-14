@@ -3,11 +3,12 @@ EVORA Risk Agent
 ================
 Multi-agent risk identification, anomaly detection, and operational risk scoring agent.
 Integrates:
-- IsolationForest anomaly detection
-- Financial risk scoring
+- Unsupervised Isolation Forest anomaly detection
+- Financial risk scoring and margin stress testing
 - Revenue drop and expense inflation pattern analysis
-- Forward-looking profit risk estimation
-- Exact preservation of existing `RiskAgent.analyze()` contract.
+- LangChain create_agent() execution with 7 registered risk tools
+- Tiered fallback: Gemini 4 -> Groq (openai/gpt-oss-120b) -> Deterministic ML
+- Preserves backward compatibility with RiskAgent.analyze().
 """
 
 from __future__ import annotations
@@ -21,27 +22,27 @@ from typing import Any, Dict, List, Optional
 from dotenv import load_dotenv
 
 from agents.config import (
-    GROQ_DEFAULT_MODEL,
     ModelQuotaManager,
     create_gemini_chat_model,
+    create_groq_chat_model,
+    get_groq_model,
     get_risk_model,
+    resolve_active_gemini_model,
 )
 from schemas.agent_schemas import EvidenceItem, RiskAgentOutput, RiskFinding
 from tools.risk_tools import (
     RISK_TOOLS,
-    analyze_expense_growth,
-    analyze_revenue_drops,
     calculate_risk_score,
     detect_anomalies,
-    explain_risk_records,
-    forecast_business_risks,
-    identify_loss_patterns,
 )
 
+# Load environment configuration without overriding deployment-provided variables
 _ROOT_DIR = Path(__file__).resolve().parent.parent
 _ENV_FILE = _ROOT_DIR / ".env"
 if _ENV_FILE.exists():
     load_dotenv(dotenv_path=_ENV_FILE, override=False)
+else:
+    load_dotenv(override=False)
 
 logger = logging.getLogger("evora.risk_agent")
 
@@ -66,9 +67,9 @@ class RiskAgent:
             or os.getenv("GOOGLE_API_KEY")
         )
         self.groq_api_key = groq_api_key or os.getenv("GROQ_API_KEY")
-        self.gemini_model = gemini_model or get_risk_model()
-        self.groq_model = groq_model or os.getenv("GROQ_MODEL", GROQ_DEFAULT_MODEL)
-        self.timeout = float(timeout or os.getenv("LLM_TIMEOUT") or 25.0)
+        self.gemini_model = resolve_active_gemini_model(gemini_model or get_risk_model())
+        self.groq_model = groq_model or get_groq_model()
+        self.timeout = float(timeout or os.getenv("LLM_TIMEOUT") or 15.0)
 
     # -------------------------------------------------------------------------
     # 1. Preserved Legacy Interface (Exact Backward Compatibility)
@@ -81,31 +82,17 @@ class RiskAgent:
         risk_score: float,
         risk_level: str,
     ) -> Dict[str, Any]:
-        """
-        Original rule-based risk evaluation interface.
-        Preserved strictly for backward compatibility with /upload and /analyze-risk.
-        """
-        reasons = []
-
-        if anomaly_detected:
-            reasons.append("An unusual business pattern was detected.")
-        else:
-            reasons.append("No unusual business pattern was detected.")
-
-        if predicted_profit < 0:
-            reasons.append("Predicted profit is negative.")
-        elif predicted_profit == 0:
-            reasons.append("Predicted profit is at break-even.")
-        else:
-            reasons.append("Predicted profit is positive.")
-
-        if risk_score > 60:
-            reasons.append("The calculated risk score indicates a high-risk condition.")
-        elif risk_score > 30:
-            reasons.append("The calculated risk score indicates a medium-risk condition.")
-        else:
-            reasons.append("The calculated risk score indicates a low-risk condition.")
-
+        """Original rule-based risk evaluation interface preserved for /upload and /analyze-risk."""
+        reasons = [
+            "An unusual business pattern was detected." if anomaly_detected else "No unusual business pattern was detected.",
+            "Predicted profit is negative." if predicted_profit < 0 else (
+                "Predicted profit is at break-even." if predicted_profit == 0 else "Predicted profit is positive."
+            ),
+            "The calculated risk score indicates a high-risk condition." if risk_score > 60 else (
+                "The calculated risk score indicates a medium-risk condition." if risk_score > 30 else
+                "The calculated risk score indicates a low-risk condition."
+            ),
+        ]
         return {
             "risk_level": risk_level,
             "risk_score": risk_score,
@@ -132,23 +119,20 @@ class RiskAgent:
                     timeout=self.timeout,
                 )
             except Exception as e:
-                logger.warning(f"Failed to initialize ChatGoogleGenerativeAI for RiskAgent: {e}")
+                logger.warning("Failed to initialize Gemini chat model for RiskAgent: %s", e)
                 if ModelQuotaManager.is_quota_error(e):
                     ModelQuotaManager.mark_exhausted(self.gemini_model, str(e))
-        elif is_exhausted:
-            logger.info("Risk Agent: Model %s is marked quota-exhausted; skipping direct LLM call.", self.gemini_model)
 
         if self.groq_api_key:
             try:
-                from langchain_groq import ChatGroq
-                return ChatGroq(
-                    model=self.groq_model,
-                    groq_api_key=self.groq_api_key,
+                return create_groq_chat_model(
+                    model_name=self.groq_model,
+                    api_key=self.groq_api_key,
                     temperature=0.1,
                     timeout=self.timeout,
                 )
             except Exception as e:
-                logger.warning(f"Failed to initialize ChatGroq for RiskAgent: {e}")
+                logger.warning("Failed to initialize Groq chat model for RiskAgent: %s", e)
 
         return RiskToolCallingModel(agent_instance=self)
 
@@ -163,9 +147,7 @@ class RiskAgent:
             "Do not guess numbers; use the tools to inspect real calculations, drops, and anomalies.\n"
             "Synthesize your findings into structured, evidence-based risk findings."
         )
-
-        model = llm or self.get_llm()
-        return create_agent(model=model, tools=RISK_TOOLS, system_prompt=system_prompt)
+        return create_agent(model=llm or self.get_llm(), tools=RISK_TOOLS, system_prompt=system_prompt)
 
     def run_agent(
         self,
@@ -188,7 +170,6 @@ class RiskAgent:
             f"NetProfit={analytics_ctx.get('total_profit', 'N/A')}, "
             f"Margin={analytics_ctx.get('profit_margin', 'N/A')}%"
         )
-
         prompt = (
             f"Dataset ID: {dataset_id}\n"
             f"User ID: {user_id}\n"
@@ -196,57 +177,50 @@ class RiskAgent:
             f"User Question: {user_query or 'Perform a diagnostic risk assessment and anomaly detection.'}"
         )
 
-        # 1. Execute actual LangChain agent
+        # 1. Tiered Agent Execution Loop
         model_used = self.gemini_model
         execution_mode = "llm"
         model_error: Optional[str] = None
+        res: Optional[Dict[str, Any]] = None
 
         is_exhausted, exhaust_reason = ModelQuotaManager.is_exhausted(self.gemini_model)
-        if is_exhausted or os.getenv("EVORA_SKIP_EXTERNAL_LLM", "0") == "1":
-            execution_mode = "deterministic_fallback"
-            model_used = f"deterministic_fallback (requested: {self.gemini_model})"
-            model_error = exhaust_reason or "External LLM skipped or quota exhausted"
-            fallback_model = RiskToolCallingModel(agent_instance=self)
-            fallback_agent = self.build_langchain_agent(llm=fallback_model)
-            res = fallback_agent.invoke({"messages": [HumanMessage(content=prompt)]})
-        else:
-            agent = self.build_langchain_agent()
+        if not is_exhausted and os.getenv("EVORA_SKIP_EXTERNAL_LLM", "0") != "1":
             try:
-                res = agent.invoke({"messages": [HumanMessage(content=prompt)]})
+                primary_agent = self.build_langchain_agent()
+                res = primary_agent.invoke({"messages": [HumanMessage(content=prompt)]})
                 execution_mode = "llm"
                 model_used = self.gemini_model
             except Exception as e:
                 model_error = str(e)
-                logger.warning(f"Primary LangChain risk agent ({self.gemini_model}) invocation failed ({e}); checking fallback.")
+                logger.warning("Primary LangChain risk agent (%s) invocation failed (%s); checking fallback.", self.gemini_model, e)
                 if ModelQuotaManager.is_quota_error(e):
                     ModelQuotaManager.mark_exhausted(self.gemini_model, str(e))
 
-                groq_succeeded = False
-                if self.groq_api_key:
-                    try:
-                        from langchain_groq import ChatGroq
-                        groq_llm = ChatGroq(
-                            model=self.groq_model,
-                            groq_api_key=self.groq_api_key,
-                            temperature=0.1,
-                            timeout=self.timeout,
-                        )
-                        groq_agent = self.build_langchain_agent(llm=groq_llm)
-                        res = groq_agent.invoke({"messages": [HumanMessage(content=prompt)]})
-                        execution_mode = "groq_fallback"
-                        model_used = self.groq_model
-                        groq_succeeded = True
-                    except Exception as ge:
-                        logger.warning(f"Groq fallback failed: {ge}")
+        # Secondary Tier: Groq fallback
+        if res is None and self.groq_api_key:
+            try:
+                groq_llm = create_groq_chat_model(
+                    model_name=self.groq_model,
+                    api_key=self.groq_api_key,
+                    temperature=0.1,
+                    timeout=self.timeout,
+                )
+                groq_agent = self.build_langchain_agent(llm=groq_llm)
+                res = groq_agent.invoke({"messages": [HumanMessage(content=prompt)]})
+                execution_mode = "groq_fallback"
+                model_used = self.groq_model
+            except Exception as ge:
+                logger.warning("Groq fallback failed for RiskAgent: %s", ge)
 
-                if not groq_succeeded:
-                    execution_mode = "deterministic_fallback"
-                    model_used = f"deterministic_fallback (requested: {self.gemini_model})"
-                    fallback_model = RiskToolCallingModel(agent_instance=self)
-                    fallback_agent = self.build_langchain_agent(llm=fallback_model)
-                    res = fallback_agent.invoke({"messages": [HumanMessage(content=prompt)]})
+        # Tertiary Tier: Deterministic ML/statistical tool-calling fallback
+        if res is None:
+            execution_mode = "deterministic_fallback"
+            model_used = f"deterministic_fallback (requested: {self.gemini_model})"
+            model_error = model_error or exhaust_reason or "External LLM skipped or quota exhausted"
+            fallback_agent = self.build_langchain_agent(llm=RiskToolCallingModel(agent_instance=self))
+            res = fallback_agent.invoke({"messages": [HumanMessage(content=prompt)]})
 
-        # 2. Extract tool messages and findings from the agent conversation
+        # 2. Extract tool messages from conversation
         messages = res.get("messages", [])
         tool_results: Dict[str, Any] = {}
         for m in messages:
@@ -257,22 +231,20 @@ class RiskAgent:
                 except Exception:
                     tool_results[tool_name] = m.content
 
-        # 3. Ensure core risk calculations exist
+        # 3. Ensure core risk calculations and anomalies are present
         risk_data = tool_results.get("calculate_risk_score")
         if not risk_data or not isinstance(risk_data, dict):
-            risk_score_raw = calculate_risk_score.invoke({"dataset_id": dataset_id, "user_id": user_id})
-            risk_data = json.loads(risk_score_raw)
+            risk_data = json.loads(calculate_risk_score.invoke({"dataset_id": dataset_id, "user_id": user_id}))
 
         anomaly_data = tool_results.get("detect_anomalies")
         if not anomaly_data or not isinstance(anomaly_data, dict):
-            anomaly_raw = detect_anomalies.invoke({"dataset_id": dataset_id, "user_id": user_id})
-            anomaly_data = json.loads(anomaly_raw)
+            anomaly_data = json.loads(detect_anomalies.invoke({"dataset_id": dataset_id, "user_id": user_id}))
 
         expense_data = tool_results.get("analyze_expense_growth") or {}
         loss_data = tool_results.get("identify_loss_patterns") or {}
         forecast_data = tool_results.get("forecast_business_risks") or {}
 
-        # 4. Parse core findings
+        # 4. Parse core findings and levels
         score = float(risk_data.get("risk_score", 5.0))
         level = str(risk_data.get("risk_level", "low")).lower()
         if level not in {"low", "medium", "high", "critical"}:
@@ -282,7 +254,7 @@ class RiskAgent:
         anomaly_count = int(anomaly_data.get("anomaly_count", 0))
         pred_profit = risk_data.get("predicted_profit") or forecast_data.get("predicted_mean_profit")
 
-        # 5. Assemble structured findings
+        # 5. Assemble structured findings and evidence items
         findings_list: List[RiskFinding] = []
         key_risks: List[str] = []
         evidence_items: List[EvidenceItem] = []
@@ -304,7 +276,7 @@ class RiskAgent:
         if anomaly_detected:
             evidence_items.append(
                 EvidenceItem(
-                    description=f"{anomaly_count} transactions flagged as statistical/ML pattern anomalies.",
+                    description=f"{anomaly_count} transactions flagged as statistical IsolationForest pattern anomalies.",
                     metric="anomaly_count",
                     value=anomaly_count,
                     source="detect_anomalies",
@@ -353,8 +325,9 @@ class RiskToolCallingModel:
     """
     Deterministic tool-calling chat model for the Risk Agent.
     Implements bind_tools to integrate seamlessly with LangChain's create_agent() runner.
-    Autonomously selects appropriate tools based on analytical findings and user question.
+    Autonomously executes all 7 specialized risk tools.
     """
+
     def __init__(self, agent_instance: Any = None):
         self.agent_instance = agent_instance
         self.bound_tools: List[Any] = []
@@ -379,7 +352,7 @@ class RiskToolCallingModel:
 
         tool_messages = [m for m in messages if isinstance(m, ToolMessage)]
 
-        # Turn 1: LLM tool selection turn
+        # Turn 1: LLM tool selection turn - invokes the 7 risk tools
         if not tool_messages:
             human_text = ""
             for m in reversed(messages):
@@ -387,83 +360,31 @@ class RiskToolCallingModel:
                     human_text = str(m.content)
                     break
 
-            dataset_id = ""
-            user_id = ""
+            dataset_id, user_id = "", ""
             for line in human_text.splitlines():
                 if line.startswith("Dataset ID:"):
                     dataset_id = line.split(":", 1)[1].strip()
                 elif line.startswith("User ID:"):
                     user_id = line.split(":", 1)[1].strip()
 
-            q_lower = human_text.lower()
-            tool_calls = []
-            call_id = 1
-
-            # 1. Always evaluate risk score & IsolationForest anomalies
-            tool_calls.append({
-                "name": "calculate_risk_score",
-                "args": {"dataset_id": dataset_id, "user_id": user_id},
-                "id": f"call_{call_id}",
-                "type": "tool_call",
-            })
-            call_id += 1
-
-            tool_calls.append({
-                "name": "detect_anomalies",
-                "args": {"dataset_id": dataset_id, "user_id": user_id},
-                "id": f"call_{call_id}",
-                "type": "tool_call",
-            })
-            call_id += 1
-
-            # 2. Expense growth analysis
-            tool_calls.append({
-                "name": "analyze_expense_growth",
-                "args": {"dataset_id": dataset_id, "user_id": user_id},
-                "id": f"call_{call_id}",
-                "type": "tool_call",
-            })
-            call_id += 1
-
-            # 3. Loss patterns
-            tool_calls.append({
-                "name": "identify_loss_patterns",
-                "args": {"dataset_id": dataset_id, "user_id": user_id},
-                "id": f"call_{call_id}",
-                "type": "tool_call",
-            })
-            call_id += 1
-
-            # 4. Forecast risks if indicated or requested
-            if any(k in q_lower for k in ["forecast", "future", "outlook", "forward", "predict"]) or not any(k in q_lower for k in ["drop", "anomaly"]):
-                tool_calls.append({
-                    "name": "forecast_business_risks",
-                    "args": {"dataset_id": dataset_id, "user_id": user_id},
-                    "id": f"call_{call_id}",
+            tool_definitions = [
+                ("calculate_risk_score", {"dataset_id": dataset_id, "user_id": user_id}),
+                ("detect_anomalies", {"dataset_id": dataset_id, "user_id": user_id}),
+                ("analyze_expense_growth", {"dataset_id": dataset_id, "user_id": user_id}),
+                ("identify_loss_patterns", {"dataset_id": dataset_id, "user_id": user_id}),
+                ("forecast_business_risks", {"dataset_id": dataset_id, "user_id": user_id}),
+                ("analyze_revenue_drops", {"dataset_id": dataset_id, "user_id": user_id}),
+                ("explain_risk_records", {"dataset_id": dataset_id, "user_id": user_id, "limit": 5}),
+            ]
+            tool_calls = [
+                {
+                    "name": name,
+                    "args": args,
+                    "id": f"call_{idx}",
                     "type": "tool_call",
-                })
-                call_id += 1
-
-            # 5. Revenue drops if indicated
-            if any(k in q_lower for k in ["drop", "decline", "fall", "deceleration"]):
-                tool_calls.append({
-                    "name": "analyze_revenue_drops",
-                    "args": {"dataset_id": dataset_id, "user_id": user_id},
-                    "id": f"call_{call_id}",
-                    "type": "tool_call",
-                })
-                call_id += 1
-
-            # 6. Granular anomaly records explanation if requested
-            if any(k in q_lower for k in ["explain", "suspicious", "flagged", "detail"]):
-                tool_calls.append({
-                    "name": "explain_risk_records",
-                    "args": {"dataset_id": dataset_id, "user_id": user_id, "limit": 5},
-                    "id": f"call_{call_id}",
-                    "type": "tool_call",
-                })
-                call_id += 1
-
+                }
+                for idx, (name, args) in enumerate(tool_definitions, 1)
+            ]
             return ChatResult(generations=[ChatGeneration(message=AIMessage(content="", tool_calls=tool_calls))])
 
         # Turn 2: Synthesize findings from real tool execution results

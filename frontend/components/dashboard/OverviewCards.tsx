@@ -101,7 +101,7 @@ export default function OverviewCards({ uploadResult }: OverviewCardsProps) {
                   <span>Recorded transaction volume</span>
                 </>
               ) : (
-                <span>Upload CSV or load demo data</span>
+                <span>Upload dataset to view revenue metrics</span>
               )}
             </div>
           </div>

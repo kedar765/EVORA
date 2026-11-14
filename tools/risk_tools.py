@@ -44,34 +44,48 @@ def _load_ml_model(filename: str):
     return None
 
 
+def compute_dataset_anomalies(df: pd.DataFrame, contamination: float = 0.05) -> Tuple[List[int], str]:
+    """
+    Computes statistical and ML anomalies on an active business dataset.
+    Uses unsupervised IsolationForest for datasets with >= 15 records,
+    and robust statistical IQR as fallback for small datasets.
+    """
+    from backend.features import prepare_features
+    from sklearn.ensemble import IsolationForest
+
+    features_df = prepare_features(df[["Quantity", "Revenue", "Expense"]].copy())
+
+    if len(df) >= 15:
+        try:
+            iso = IsolationForest(
+                n_estimators=100,
+                contamination=contamination,
+                random_state=42,
+            )
+            preds = iso.fit_predict(features_df[MODEL_FEATURES].astype(float))
+            anomaly_indices = [int(i) for i, p in enumerate(preds) if p == -1]
+            return anomaly_indices, "IsolationForest"
+        except Exception:
+            pass
+
+    # Statistical fallback: IQR on Expense
+    q1 = df["Expense"].quantile(0.25)
+    q3 = df["Expense"].quantile(0.75)
+    iqr = q3 - q1
+    upper = q3 + (2.5 * iqr)
+    anomaly_indices = [int(i) for i in df[df["Expense"] > upper].index]
+    return anomaly_indices, "Statistical IQR"
+
+
 @tool
 def detect_anomalies(dataset_id: str, user_id: str) -> str:
     """
     Detects unusual, suspicious, or abnormal business transactions using the
-    trained IsolationForest machine learning model and statistical validation.
+    unsupervised IsolationForest machine learning model and statistical validation.
     """
-    global _anomaly_model
     try:
         df, _ = load_user_dataset(dataset_id, user_id)
-        from backend.features import prepare_features
-
-        features_df = prepare_features(df[["Quantity", "Revenue", "Expense"]].copy())
-
-        if _anomaly_model is None:
-            _anomaly_model = _load_ml_model("anomaly_model.pkl")
-
-        anomaly_indices: List[int] = []
-        if _anomaly_model is not None and all(f in features_df.columns for f in MODEL_FEATURES):
-            preds = _anomaly_model.predict(features_df[MODEL_FEATURES])
-            anomaly_indices = [int(i) for i, p in enumerate(preds) if p == -1]
-        else:
-            # Robust statistical fallback (IQR on revenue & expenses)
-            q1 = df["Expense"].quantile(0.25)
-            q3 = df["Expense"].quantile(0.75)
-            iqr = q3 - q1
-            upper = q3 + (2.5 * iqr)
-            anomaly_indices = list(df[df["Expense"] > upper].index)[:20]
-
+        anomaly_indices, method = compute_dataset_anomalies(df)
         anomaly_count = len(anomaly_indices)
         anomaly_pct = (anomaly_count / len(df) * 100) if len(df) > 0 else 0.0
 
@@ -81,7 +95,7 @@ def detect_anomalies(dataset_id: str, user_id: str) -> str:
             "anomaly_percentage": round(anomaly_pct, 2),
             "sample_anomaly_indices": anomaly_indices[:10],
             "total_records_evaluated": len(df),
-            "detection_method": "IsolationForest" if _anomaly_model is not None else "Statistical IQR",
+            "detection_method": method,
         })
     except DatasetAccessError as e:
         return json.dumps({"error": e.message})
@@ -265,34 +279,27 @@ def calculate_risk_score(dataset_id: str, user_id: str) -> str:
             })
 
         # 3. Anomaly Risk Factor
-        global _anomaly_model
-        if _anomaly_model is None:
-            _anomaly_model = _load_ml_model("anomaly_model.pkl")
+        anomaly_indices, _ = compute_dataset_anomalies(df)
+        anom_count = len(anomaly_indices)
+        anomaly_pct = (anom_count / len(df) * 100) if len(df) > 0 else 0.0
+        anomaly_detected = anom_count > 0
 
-        anomaly_detected = False
-        anomaly_pct = 0.0
-        if _anomaly_model is not None and all(f in features_df.columns for f in MODEL_FEATURES):
-            preds = _anomaly_model.predict(features_df[MODEL_FEATURES])
-            anom_count = int((preds == -1).sum())
-            anomaly_pct = (anom_count / len(df)) * 100
-            anomaly_detected = anom_count > 0
-
-            if anomaly_pct > 3:
-                score += 25
-                findings.append({
-                    "risk_type": "Elevated Operational Anomalies",
-                    "severity": "high",
-                    "description": f"{anomaly_pct:.1f}% of transactions deviate significantly from regular patterns.",
-                })
-            elif anomaly_pct > 1:
-                score += 15
-                findings.append({
-                    "risk_type": "Moderate Operational Anomalies",
-                    "severity": "medium",
-                    "description": f"{anomaly_pct:.1f}% of transactions flagged as pattern anomalies.",
-                })
-            elif anomaly_detected:
-                score += 5
+        if anomaly_pct > 8.0:
+            score += 25
+            findings.append({
+                "risk_type": "Elevated Operational Anomalies",
+                "severity": "high",
+                "description": f"{anomaly_pct:.1f}% of transactions deviate significantly from regular patterns ({anom_count} outlier records).",
+            })
+        elif anomaly_pct > 2.0:
+            score += 15
+            findings.append({
+                "risk_type": "Moderate Operational Anomalies",
+                "severity": "medium",
+                "description": f"{anomaly_pct:.1f}% of transactions flagged as pattern anomalies ({anom_count} outlier records).",
+            })
+        elif anomaly_detected:
+            score += 5
 
         # 4. Expense Ratio Risk Factor
         expense_ratio = (total_exp / total_rev * 100) if total_rev > 0 else 100.0

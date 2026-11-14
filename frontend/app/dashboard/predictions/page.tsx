@@ -20,14 +20,17 @@ import { api, type ForecastNextDayResponse } from "@/lib/api";
 export default function PredictionsPage() {
   const { uploadResult, isUploading } = useDashboard();
   const hasData = !!uploadResult;
+  const activeDatasetId = uploadResult?.dataset_id;
+  const activeFilename = uploadResult?.filename;
 
   const [forecast, setForecast] = useState<ForecastNextDayResponse | null>(null);
   const [forecastLoading, setForecastLoading] = useState(true);
   const [forecastError, setForecastError] = useState<string | null>(null);
 
-  const fetchForecast = useCallback(async () => {
+  const fetchForecast = useCallback(async (datasetId?: string) => {
+    setForecastLoading(true);
     try {
-      const data = await api.getForecastNextDay();
+      const data = await api.getForecastNextDay(datasetId);
       setForecast(data);
       setForecastError(null);
     } catch (err: unknown) {
@@ -42,40 +45,37 @@ export default function PredictionsPage() {
   }, []);
 
   const handleRefreshForecast = () => {
-    setForecastLoading(true);
-    setForecastError(null);
-    void fetchForecast();
+    void fetchForecast(activeDatasetId);
   };
 
   useEffect(() => {
-  let isActive = true;
+    let isActive = true;
+    setForecastLoading(true);
 
-  api.getForecastNextDay()
-    .then((data) => {
-      if (!isActive) return;
+    api.getForecastNextDay(activeDatasetId)
+      .then((data) => {
+        if (!isActive) return;
+        setForecast(data);
+        setForecastError(null);
+      })
+      .catch((err: unknown) => {
+        if (!isActive) return;
+        setForecastError(
+          err instanceof Error
+            ? err.message
+            : "Failed to load next-day profit forecast."
+        );
+      })
+      .finally(() => {
+        if (isActive) {
+          setForecastLoading(false);
+        }
+      });
 
-      setForecast(data);
-      setForecastError(null);
-    })
-    .catch((err: unknown) => {
-      if (!isActive) return;
-
-      setForecastError(
-        err instanceof Error
-          ? err.message
-          : "Failed to load next-day profit forecast."
-      );
-    })
-    .finally(() => {
-      if (isActive) {
-        setForecastLoading(false);
-      }
-    });
-
-  return () => {
-    isActive = false;
-  };
-}, []);
+    return () => {
+      isActive = false;
+    };
+  }, [activeDatasetId]);
 
   return (
     <div className="space-y-6 max-w-5xl">
@@ -128,7 +128,7 @@ export default function PredictionsPage() {
               <TrendingUp className="w-5 h-5" />
             </div>
             <div>
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center gap-2">
                 <h2 id="forecast-heading" className="text-lg font-bold text-slate-900">
                   Next-Day Profit Forecast
                 </h2>
@@ -136,6 +136,18 @@ export default function PredictionsPage() {
                   <CheckCircle2 className="w-3 h-3" />
                   <span>Production Live</span>
                 </span>
+                {activeDatasetId ? (
+                  <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-medium bg-blue-50 text-blue-700 border border-blue-200">
+                    <span className="text-blue-500 font-normal">Active Dataset:</span>
+                    <span className="font-semibold truncate max-w-[140px] sm:max-w-[200px]" title={forecast?.filename || activeFilename}>
+                      {forecast?.filename || activeFilename || "Selected Dataset"}
+                    </span>
+                  </span>
+                ) : (
+                  <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-medium bg-slate-100 text-slate-600 border border-slate-200">
+                    Baseline Demo Model
+                  </span>
+                )}
               </div>
               <p className="text-xs text-slate-500 mt-0.5">
                 Leakage-safe chronological time series regression predicting the next business day&apos;s net profit.

@@ -205,7 +205,7 @@ export default function DataManagementPage() {
               Dataset {uploadResult.filename} Active
             </h3>
             <p className="text-xs text-slate-500 max-w-md mx-auto">
-              Processed {uploadResult.rows_processed} records. Detailed row preview is generated during file selection or when loading the demonstration dataset.
+              Processed {uploadResult.rows_processed} records. Detailed row preview is generated from your uploaded business data.
             </p>
           </div>
         ) : (
@@ -218,7 +218,7 @@ export default function DataManagementPage() {
                 No Active Dataset to Preview
               </h3>
               <p className="text-xs text-slate-400 max-w-md mx-auto mt-1">
-                Upload a CSV file above or click <strong>Load Demo Data</strong> to preview tabular records and feed business intelligence agents.
+                Upload a CSV or Excel dataset above to preview tabular records and feed business intelligence agents.
               </p>
             </div>
           </div>

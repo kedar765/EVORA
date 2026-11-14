@@ -64,7 +64,7 @@ class TestEVORAIntegrationAudit(unittest.TestCase):
                 "password": cls.user_password,
             },
         )
-        assert signup_res.status_code == 200, f"Signup failed: {signup_res.text}"
+        assert signup_res.status_code in (200, 201), f"Signup failed: {signup_res.text}"
 
         login_res = cls.client.post(
             "/api/auth/login",

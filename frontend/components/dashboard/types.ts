@@ -82,6 +82,26 @@ export interface WhatIfResult {
   new_predicted_profit: number;
   profit_difference: number;
   result: string;
+  aggregate_analysis?: {
+    current_revenue: number;
+    current_expense: number;
+    current_profit: number;
+    current_margin: number;
+    target_revenue: number;
+    target_expense: number;
+    proposed_profit: number;
+    proposed_margin: number;
+    profit_delta: number;
+    margin_delta: number;
+    percentage_profit_improvement: number;
+  };
+  forecast_comparison?: {
+    horizon: string;
+    days_in_period: number;
+    baseline_daily_profit: number;
+    proposed_daily_profit: number;
+    daily_profit_delta: number;
+  };
 }
 
 export function formatINR(val: number | null | undefined): string {

@@ -48,7 +48,7 @@ from backend.auth import (
 )
 from backend.features import prepare_features
 from ml.forecast import DailyProfitForecaster
-from schemas.agent_schemas import AgentWorkflowRequest, AgentWorkflowResponse
+from schemas.agent_schemas import AgentWorkflowRequest
 from workflows.graph import run_evora_workflow
 
 
@@ -506,6 +506,24 @@ async def read_business_csv(
             if req not in dataframe.columns and req_lower in semantic_map:
                 dataframe[req] = dataframe[semantic_map[req_lower]]
 
+        # If Expense is missing but Quantity and Unit_Cost are present, calculate total Expense
+        if "Expense" not in dataframe.columns and "unit_cost" in semantic_map:
+            qty_col = semantic_map.get("quantity") or ("Quantity" if "Quantity" in dataframe.columns else None)
+            unit_c_col = semantic_map["unit_cost"]
+            if qty_col and qty_col in dataframe.columns:
+                q_ser = pd.to_numeric(dataframe[qty_col], errors="coerce").fillna(1.0)
+                uc_ser = pd.to_numeric(dataframe[unit_c_col], errors="coerce").fillna(0.0)
+                dataframe["Expense"] = q_ser * uc_ser
+
+        # If Revenue is missing but Quantity and Unit_Price are present, calculate total Revenue
+        if "Revenue" not in dataframe.columns and "unit_price" in semantic_map:
+            qty_col = semantic_map.get("quantity") or ("Quantity" if "Quantity" in dataframe.columns else None)
+            unit_p_col = semantic_map["unit_price"]
+            if qty_col and qty_col in dataframe.columns:
+                q_ser = pd.to_numeric(dataframe[qty_col], errors="coerce").fillna(1.0)
+                up_ser = pd.to_numeric(dataframe[unit_p_col], errors="coerce").fillna(0.0)
+                dataframe["Revenue"] = q_ser * up_ser
+
     missing = [
         column
         for column in required_columns
@@ -620,7 +638,25 @@ async def upload_csv(
     anomaly_count = 0
     anomaly_indices = []
 
-    if anomaly_model is not None:
+    # Unsupervised IsolationForest anomaly detection on the active business dataset
+    if len(df) >= 15:
+        from sklearn.ensemble import IsolationForest
+        try:
+            iso = IsolationForest(
+                n_estimators=100,
+                contamination=0.05,
+                random_state=42,
+            )
+            preds = iso.fit_predict(features[MODEL_FEATURES].astype(float))
+            anomaly_indices = [
+                int(index)
+                for index, value in enumerate(preds)
+                if value == -1
+            ]
+            anomaly_count = len(anomaly_indices)
+        except Exception as exc:
+            print(f"IsolationForest error: {exc}")
+    elif anomaly_model is not None:
         try:
             results = anomaly_model.predict(
                 features[MODEL_FEATURES]
@@ -1215,45 +1251,107 @@ class WhatIfRequest(BaseModel):
     new_quantity: float
     new_revenue: float
     new_expense: float
+    dataset_id: Optional[str] = None
 
 
 @app.post("/what-if")
 def what_if_analysis(
     data: WhatIfRequest,
-    user: dict = Depends(get_current_user),
+    user: Optional[dict] = Depends(get_current_user),
 ):
     require_profit_model()
 
-    current_df = make_feature_frame(
-        data.current_quantity,
-        data.current_revenue,
-        data.current_expense,
+    # 1. Deterministic Aggregate Financial Calculations (Ground Truth Accounting)
+    current_profit = float(data.current_revenue - data.current_expense)
+    new_profit = float(data.new_revenue - data.new_expense)
+    profit_difference = float(new_profit - current_profit)
+
+    current_margin = float(
+        (current_profit / data.current_revenue * 100.0)
+        if data.current_revenue > 0
+        else 0.0
+    )
+    new_margin = float(
+        (new_profit / data.new_revenue * 100.0)
+        if data.new_revenue > 0
+        else 0.0
+    )
+    margin_difference = float(new_margin - current_margin)
+    percentage_profit_improvement = float(
+        (profit_difference / abs(current_profit) * 100.0)
+        if current_profit != 0
+        else 0.0
     )
 
-    new_df = make_feature_frame(
-        data.new_quantity,
-        data.new_revenue,
-        data.new_expense,
-    )
+    # 2. Dataset Context & Horizon Estimation
+    user_id = user.get("id") if isinstance(user, dict) else None
+    dataset_path = None
+    days_count = 1
 
-    current_profit = float(
-        model.predict(
-            current_df[MODEL_FEATURES]
-        )[0]
-    )
+    if data.dataset_id and user_id:
+        with database() as conn:
+            row = conn.execute(
+                "SELECT storage_path FROM datasets WHERE id = ? AND user_id = ?",
+                (data.dataset_id, user_id),
+            ).fetchone()
+            if row:
+                dataset_path = row["storage_path"]
+    elif user_id:
+        with database() as conn:
+            row = conn.execute(
+                "SELECT storage_path FROM datasets WHERE user_id = ? ORDER BY uploaded_at DESC LIMIT 1",
+                (user_id,),
+            ).fetchone()
+            if row:
+                dataset_path = row["storage_path"]
 
-    new_profit = float(
-        model.predict(
-            new_df[MODEL_FEATURES]
-        )[0]
-    )
+    dataset_df = None
+    if dataset_path and Path(dataset_path).exists():
+        try:
+            p = str(dataset_path).lower()
+            if p.endswith((".xlsx", ".xls")):
+                dataset_df = pd.read_excel(dataset_path)
+            else:
+                dataset_df = pd.read_csv(dataset_path)
+            if "Date" in dataset_df.columns:
+                days_count = len(dataset_df["Date"].dropna().unique())
+        except Exception:
+            dataset_df = None
 
-    difference = new_profit - current_profit
+    if days_count <= 1:
+        if data.current_revenue > 5_000_000:
+            days_count = 184
+        elif data.current_revenue > 500_000:
+            days_count = 90
+        elif data.current_revenue > 50_000:
+            days_count = 30
+        else:
+            days_count = 1
 
-    if difference > 0:
-        result = "Profit may increase"
-    elif difference < 0:
-        result = "Profit may decrease"
+    days_count = max(1, days_count)
+
+    # 3. Next-Day ML Forecasting Horizon Comparison
+    forecast_horizon = "1-day (Next Business Day)"
+    baseline_daily_profit = 0.0
+    daily_profit_delta = 0.0
+
+    if dataset_df is not None and daily_profit_forecaster.is_loaded and len(dataset_df) >= 30:
+        try:
+            fc_res = daily_profit_forecaster.predict_next_day(historical_df=dataset_df)
+            baseline_daily_profit = float(fc_res.get("predicted_profit", 0.0))
+        except Exception:
+            baseline_daily_profit = round(current_profit / days_count, 2)
+    else:
+        baseline_daily_profit = round(current_profit / days_count, 2)
+
+    daily_profit_delta = round(profit_difference / days_count, 2)
+    proposed_daily_profit = round(baseline_daily_profit + daily_profit_delta, 2)
+
+    # 4. Format Human-Readable Result Summary
+    if profit_difference > 0:
+        result = f"Profit may increase by ₹{profit_difference:,.2f} ({'+' if percentage_profit_improvement >= 0 else ''}{percentage_profit_improvement:.2f}%)"
+    elif profit_difference < 0:
+        result = f"Profit may decrease by ₹{abs(profit_difference):,.2f} ({percentage_profit_improvement:.2f}%)"
     else:
         result = "No significant change"
 
@@ -1261,15 +1359,35 @@ def what_if_analysis(
         "success": True,
         "current_predicted_profit": round(current_profit, 2),
         "new_predicted_profit": round(new_profit, 2),
-        "profit_difference": round(difference, 2),
+        "profit_difference": round(profit_difference, 2),
         "result": result,
+        "aggregate_analysis": {
+            "current_revenue": round(data.current_revenue, 2),
+            "current_expense": round(data.current_expense, 2),
+            "current_profit": round(current_profit, 2),
+            "current_margin": round(current_margin, 2),
+            "target_revenue": round(data.new_revenue, 2),
+            "target_expense": round(data.new_expense, 2),
+            "proposed_profit": round(new_profit, 2),
+            "proposed_margin": round(new_margin, 2),
+            "profit_delta": round(profit_difference, 2),
+            "margin_delta": round(margin_difference, 2),
+            "percentage_profit_improvement": round(percentage_profit_improvement, 2),
+        },
+        "forecast_comparison": {
+            "horizon": forecast_horizon,
+            "days_in_period": days_count,
+            "baseline_daily_profit": round(baseline_daily_profit, 2),
+            "proposed_daily_profit": round(proposed_daily_profit, 2),
+            "daily_profit_delta": round(daily_profit_delta, 2),
+        },
     }
 
-    user_id = user.get("id") if isinstance(user, dict) else None
     if user_id:
         analysis_id, created_at = save_analysis_history(
             user_id=user_id,
             analysis_type="what_if_analysis",
+            dataset_id=data.dataset_id,
             input_summary={
                 "current_quantity": data.current_quantity,
                 "current_revenue": data.current_revenue,
@@ -1277,6 +1395,7 @@ def what_if_analysis(
                 "new_quantity": data.new_quantity,
                 "new_revenue": data.new_revenue,
                 "new_expense": data.new_expense,
+                "dataset_id": data.dataset_id,
             },
             result=response,
         )
@@ -1392,11 +1511,64 @@ async def analytics(
 
 @app.get("/forecast/next-day")
 def get_next_day_forecast(
+    dataset_id: Optional[str] = Query(None, description="Optional dataset ID belonging to the authenticated user"),
     user: dict = Depends(get_current_user),
 ):
     require_forecast_model()
+
+    # Normalize parameters for both FastAPI HTTP routing and direct Python calls
+    actual_dataset_id = dataset_id if isinstance(dataset_id, str) else None
+    actual_user = user if isinstance(user, dict) else {}
+    user_id = actual_user.get("id")
+
+    historical_df = None
+    dataset_meta = None
+
+    if actual_dataset_id is not None:
+        clean_dataset_id = actual_dataset_id.strip()
+        if not clean_dataset_id:
+            raise HTTPException(status_code=400, detail="dataset_id cannot be empty.")
+        if not user_id:
+            raise HTTPException(status_code=401, detail="Authentication required.")
+
+        from tools.dataset_tools import load_user_dataset, DatasetAccessError
+
+        try:
+            historical_df, dataset_meta = load_user_dataset(
+                dataset_id=clean_dataset_id,
+                user_id=user_id,
+            )
+        except DatasetAccessError as exc:
+            raise HTTPException(status_code=exc.status_code, detail=exc.message)
+        except Exception as exc:
+            raise HTTPException(status_code=400, detail=f"Failed to load dataset: {str(exc)}")
+
+        # Validate time-series columns
+        if not dataset_meta.get("has_date") or "Date" not in historical_df.columns or historical_df["Date"].dropna().empty:
+            raise HTTPException(
+                status_code=400,
+                detail="Dataset must contain a valid 'Date' column with parseable timestamps for forecasting.",
+            )
+
+        orig_cols_lower = [str(c).lower().strip() for c in dataset_meta.get("original_columns", [])]
+        semantic_map = dataset_meta.get("semantic_mapping", {})
+        has_rev = "revenue" in semantic_map or any(c in orig_cols_lower for c in ["revenue", "sales", "turnover", "income"])
+        has_exp = "expense" in semantic_map or any(c in orig_cols_lower for c in ["expense", "expenses", "cost", "spending", "cogs", "expenditure"])
+        has_unit_financials = any(c in orig_cols_lower for c in ["quantity", "qty"]) and \
+                              any(c in orig_cols_lower for c in ["unit_price", "price"]) and \
+                              any(c in orig_cols_lower for c in ["cost_per_unit", "unit_cost"])
+
+        if not ((has_rev and has_exp) or has_unit_financials):
+            raise HTTPException(
+                status_code=400,
+                detail="Dataset must contain either ['Revenue', 'Expense'] or ['Quantity', 'Unit_Price', 'Cost_Per_Unit'] columns.",
+            )
+
     try:
-        forecast_result = daily_profit_forecaster.predict_next_day()
+        if historical_df is not None:
+            forecast_result = daily_profit_forecaster.predict_next_day(historical_df=historical_df)
+        else:
+            forecast_result = daily_profit_forecaster.predict_next_day()
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     except Exception as exc:
@@ -1406,31 +1578,34 @@ def get_next_day_forecast(
         ) from exc
 
     response = make_json_safe(forecast_result)
-    user_id = user.get("id") if isinstance(user, dict) else None
+    if not isinstance(response, dict):
+        response = {"prediction": response, "success": True}
+
+    if dataset_meta:
+        response["dataset_id"] = dataset_meta.get("dataset_id")
+        response["filename"] = dataset_meta.get("filename")
+
     if user_id:
+        input_summary = {
+            "source": "user_dataset" if dataset_meta else "stored_forecast_history",
+        }
+        if dataset_meta:
+            input_summary["dataset_id"] = dataset_meta.get("dataset_id")
+            input_summary["filename"] = dataset_meta.get("filename")
+            input_summary["row_count"] = dataset_meta.get("row_count")
+            input_summary["date_range"] = f"{dataset_meta.get('date_start')} to {dataset_meta.get('date_end')}"
+
         analysis_id, created_at = save_analysis_history(
             user_id=user_id,
             analysis_type="future_profit_forecast",
-            input_summary={"source": "stored_forecast_history"},
-            result=response if isinstance(response, dict) else {"prediction": response},
+            input_summary=input_summary,
+            result=response,
+            dataset_id=dataset_meta.get("dataset_id") if dataset_meta else None,
         )
+        response["analysis_id"] = analysis_id
+        response["created_at"] = created_at
 
-        if isinstance(response, dict):
-            response["analysis_id"] = analysis_id
-            response["created_at"] = created_at
-            return response
-
-        return {
-            "success": True,
-            "prediction": response,
-            "analysis_id": analysis_id,
-            "created_at": created_at,
-        }
-
-    return response if isinstance(response, dict) else {
-        "success": True,
-        "prediction": response,
-    }
+    return response
 
 
 @app.post("/forecast/next-day")

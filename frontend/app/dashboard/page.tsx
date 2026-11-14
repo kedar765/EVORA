@@ -6,7 +6,6 @@ import {
   CheckCircle2,
   AlertCircle,
   Trash2,
-  Sparkles,
   ChevronDown,
   ChevronUp,
   FileSpreadsheet,
@@ -153,8 +152,8 @@ export default function DashboardPage() {
                 onClick={() => setShowUploadTray(true)}
                 className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl text-xs font-semibold text-blue-700 bg-blue-50 hover:bg-blue-100 border border-blue-200/70 transition-colors"
               >
-                <Sparkles className="w-3.5 h-3.5 text-blue-600" />
-                Ingest or Load Demo Data
+                <UploadCloud className="w-3.5 h-3.5 text-blue-600" />
+                Upload Business Dataset
               </button>
             )}
           </div>
