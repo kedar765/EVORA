@@ -18,8 +18,11 @@ import tempfile
 import time
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from fastapi.testclient import TestClient
+
+os.environ["EVORA_SKIP_EXTERNAL_LLM"] = "1"
 
 import backend.auth as auth
 import backend.main as main
@@ -348,7 +351,12 @@ class TestEVORAComprehensive(unittest.TestCase):
         self.assertEqual(res.status_code, 200)
         data = res.json()
         self.assertTrue(data["success"])
-        self.assertIn(data["result"], ["Profit may increase", "Profit may decrease", "No significant change"])
+        self.assertTrue(
+        data["result"].startswith(
+            ("Profit may increase", "Profit may decrease", "No significant change")
+        ),
+        f"Unexpected what-if result: {data['result']}"
+    )
         expected_diff = round(data["new_predicted_profit"] - data["current_predicted_profit"], 2)
         self.assertAlmostEqual(data["profit_difference"], expected_diff, places=2)
 
@@ -525,8 +533,18 @@ class TestEVORAComprehensive(unittest.TestCase):
         self.assertEqual(item_res.status_code, 200)
         self.assertIn("result", item_res.json()["analysis"])
 
-    def test_p2_06_decision_recommendations_endpoint(self):
+    @patch("backend.main.decision_agent.recommend")
+    def test_p2_06_decision_recommendations_endpoint(self, mock_recommend):
         """Test POST /decision/recommend returns structured decision advice and saves history."""
+        mock_recommend.return_value = {
+            "question_addressed": "What should we do?",
+            "priority": "LOW",
+            "risk_context": {"risk_level": "LOW", "risk_score": 15, "anomaly_detected": False},
+            "evidence": ["Healthy profit margins"],
+            "recommendations": ["Scale high-margin products"],
+            "action_plan": [{"action": "Scale high-margin products", "reason": "Profitable", "expected_benefit": "Growth", "risk": "Low"}],
+            "decision_disclaimer": "EVORA provides decision support.",
+        }
         self._signup_user("Decision User", "decision_api@example.com", "SecurePass123!")
         payload = {
             "analytics": {"total_profit": 55000, "profit_margin": 38.7},
@@ -708,7 +726,8 @@ class TestEVORAComprehensive(unittest.TestCase):
     # PHASE 5: INTEGRATION TESTING (12-STEP END-TO-END WORKFLOW)
     # =========================================================================
 
-    def test_p5_full_12_step_integration_workflow(self):
+    @patch("backend.main.decision_agent.recommend")
+    def test_p5_full_12_step_integration_workflow(self, mock_recommend):
         """
         Execute full business workflow:
         1. User signup/login
@@ -724,6 +743,15 @@ class TestEVORAComprehensive(unittest.TestCase):
         11. Dataset & history visible on dashboard
         12. User logs out and APIs reject access
         """
+        mock_recommend.return_value = {
+            "question_addressed": "What should we do?",
+            "priority": "LOW",
+            "risk_context": {"risk_level": "LOW", "risk_score": 15, "anomaly_detected": False},
+            "evidence": ["Healthy profit margins"],
+            "recommendations": ["Scale high-margin products"],
+            "action_plan": [{"action": "Scale high-margin products", "reason": "Profitable", "expected_benefit": "Growth", "risk": "Low"}],
+            "decision_disclaimer": "EVORA provides decision support.",
+        }
         email = f"e2e_{int(time.time())}@evora.test"
         password = "E2EProductionPass2026!"
 

@@ -12,7 +12,6 @@ import {
   Settings,
   LogOut,
   X,
-  CheckCircle2,
   AlertCircle,
   Database,
   Sparkles,

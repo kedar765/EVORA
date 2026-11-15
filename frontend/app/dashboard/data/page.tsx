@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect } from "react";
 import {
   FileSpreadsheet,
   Table as TableIcon,
@@ -10,7 +10,6 @@ import {
   Database,
   ArrowRight,
   Loader2,
-  Calendar,
   Layers,
 } from "lucide-react";
 
@@ -34,7 +33,7 @@ export default function DataManagementPage() {
   const [loadingDatasets, setLoadingDatasets] = useState<boolean>(true);
   const [activatingId, setActivatingId] = useState<string | null>(null);
 
-  const fetchVaultDatasets = useCallback(async () => {
+  const handleRefreshVault = async () => {
     try {
       setLoadingDatasets(true);
       const res = await api.listDatasets(50, 0);
@@ -44,11 +43,31 @@ export default function DataManagementPage() {
     } finally {
       setLoadingDatasets(false);
     }
-  }, []);
+  };
 
   useEffect(() => {
-    void fetchVaultDatasets();
-  }, [fetchVaultDatasets, uploadResult?.dataset_id]);
+    let active = true;
+    api.listDatasets(50, 0)
+      .then((res) => {
+        if (active) {
+          setSavedDatasets(res.datasets || []);
+        }
+      })
+      .catch((err: unknown) => {
+        if (active) {
+          console.error("Failed to fetch vault datasets:", err);
+        }
+      })
+      .finally(() => {
+        if (active) {
+          setLoadingDatasets(false);
+        }
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [uploadResult?.dataset_id]);
 
   const activateDataset = async (dataset: DatasetItem) => {
     try {
@@ -242,7 +261,7 @@ export default function DataManagementPage() {
           </div>
           <button
             type="button"
-            onClick={fetchVaultDatasets}
+            onClick={handleRefreshVault}
             disabled={loadingDatasets}
             className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-medium text-slate-600 bg-slate-100 hover:bg-slate-200 transition-colors cursor-pointer self-start sm:self-auto"
           >

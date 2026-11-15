@@ -197,7 +197,7 @@ class RiskAgent:
                     ModelQuotaManager.mark_exhausted(self.gemini_model, str(e))
 
         # Secondary Tier: Groq fallback
-        if res is None and self.groq_api_key:
+        if res is None and self.groq_api_key and os.getenv("EVORA_SKIP_EXTERNAL_LLM", "0") != "1":
             try:
                 groq_llm = create_groq_chat_model(
                     model_name=self.groq_model,

@@ -13,6 +13,7 @@ import {
 } from "react";
 
 import { useAuth } from "@/lib/auth";
+import type { DecisionRecommendationResponse } from "@/lib/api";
 
 import type {
   UploadResult,
@@ -21,13 +22,17 @@ import type {
   ParsedRecord,
 } from "./types";
 
+type DecisionResult = DecisionRecommendationResponse["decision"];
+
 interface DashboardContextType {
   uploadResult: UploadResult | null;
   fullDataset: FullDatasetData | null;
   datasetPreview: DatasetPreviewData | null;
+  decisionResult: DecisionResult | null;
   isUploading: boolean;
   setIsUploading: (loading: boolean) => void;
   setUploadResult: (result: UploadResult | null) => void;
+  setDecisionResult: (result: DecisionResult | null) => void;
   handleUploadSuccess: (
     data: UploadResult,
     rawCsvText?: string
@@ -48,6 +53,7 @@ const STORAGE_KEYS = {
   upload: "evora_active_upload",
   preview: "evora_dataset_preview",
   dataset: "evora_full_dataset",
+  decision: "evora_decision_result",
 };
 
 const DashboardContext = createContext<
@@ -75,10 +81,7 @@ function saveStoredData<T>(
       data,
     };
 
-    sessionStorage.setItem(
-      key,
-      JSON.stringify(value)
-    );
+    sessionStorage.setItem(key, JSON.stringify(value));
   } catch (error) {
     console.warn(
       "Unable to save dashboard session data:",
@@ -124,12 +127,14 @@ interface DashboardSnapshot {
   uploadResult: UploadResult | null;
   datasetPreview: DatasetPreviewData | null;
   fullDataset: FullDatasetData | null;
+  decisionResult: DecisionResult | null;
 }
 
 const EMPTY_DASHBOARD_SNAPSHOT: DashboardSnapshot = {
   uploadResult: null,
   datasetPreview: null,
   fullDataset: null,
+  decisionResult: null,
 };
 
 const dashboardSnapshots = new Map<string, DashboardSnapshot>();
@@ -169,6 +174,11 @@ function getDashboardSnapshot(userId: string | null): DashboardSnapshot {
       userId
     );
 
+    const savedDecision = readStoredData<DecisionResult>(
+      STORAGE_KEYS.decision,
+      userId
+    );
+
     const validUpload =
       savedUpload?.success === true &&
       savedUpload.metrics != null;
@@ -177,10 +187,11 @@ function getDashboardSnapshot(userId: string | null): DashboardSnapshot {
       userId,
       validUpload
         ? {
-          uploadResult: savedUpload,
-          datasetPreview: savedPreview,
-          fullDataset: savedDataset,
-        }
+            uploadResult: savedUpload,
+            datasetPreview: savedPreview,
+            fullDataset: savedDataset,
+            decisionResult: savedDecision,
+          }
         : EMPTY_DASHBOARD_SNAPSHOT
     );
 
@@ -218,19 +229,13 @@ function parseCsvLine(line: string): string[] {
     const char = line[i];
 
     if (char === '"') {
-      if (
-        insideQuotes &&
-        line[i + 1] === '"'
-      ) {
+      if (insideQuotes && line[i + 1] === '"') {
         current += '"';
         i++;
       } else {
         insideQuotes = !insideQuotes;
       }
-    } else if (
-      char === "," &&
-      !insideQuotes
-    ) {
+    } else if (char === "," && !insideQuotes) {
       values.push(current.trim());
       current = "";
     } else {
@@ -272,8 +277,7 @@ export function parseFullCsv(
       const numericValue = Number(value);
 
       record[header] =
-        value !== "" &&
-          Number.isFinite(numericValue)
+        value !== "" && Number.isFinite(numericValue)
           ? numericValue
           : value;
     });
@@ -307,6 +311,7 @@ export function parseCsvToPreview(
     totalRows: dataset.totalRows,
   };
 }
+
 export function DashboardProvider({
   children,
 }: {
@@ -331,6 +336,7 @@ export function DashboardProvider({
     uploadResult,
     datasetPreview,
     fullDataset,
+    decisionResult,
   } = snapshot;
 
   const [isUploading, setIsUploading] = useState(false);
@@ -377,15 +383,33 @@ export function DashboardProvider({
       updateDashboardSnapshot(userId, (current) => ({
         ...current,
         uploadResult: result,
+        decisionResult: null,
       }));
 
-      saveStoredData(
-        STORAGE_KEYS.upload,
-        userId,
-        result
-      );
+      saveStoredData(STORAGE_KEYS.upload, userId, result);
+      sessionStorage.removeItem(STORAGE_KEYS.decision);
     },
     [userId, clearDataset]
+  );
+
+  const setDecisionResult = useCallback(
+    (result: DecisionResult | null) => {
+      if (!userId) {
+        throw new Error("Login session is not available.");
+      }
+
+      updateDashboardSnapshot(userId, (current) => ({
+        ...current,
+        decisionResult: result,
+      }));
+
+      if (result) {
+        saveStoredData(STORAGE_KEYS.decision, userId, result);
+      } else {
+        sessionStorage.removeItem(STORAGE_KEYS.decision);
+      }
+    },
+    [userId]
   );
 
   const handleUploadSuccess = useCallback(
@@ -421,26 +445,15 @@ export function DashboardProvider({
         uploadResult: data,
         fullDataset: dataset ?? current.fullDataset,
         datasetPreview: preview ?? current.datasetPreview,
+        decisionResult: null,
       }));
 
-      saveStoredData(
-        STORAGE_KEYS.upload,
-        userId,
-        data
-      );
+      saveStoredData(STORAGE_KEYS.upload, userId, data);
+      sessionStorage.removeItem(STORAGE_KEYS.decision);
 
       if (dataset && preview) {
-        saveStoredData(
-          STORAGE_KEYS.dataset,
-          userId,
-          dataset
-        );
-
-        saveStoredData(
-          STORAGE_KEYS.preview,
-          userId,
-          preview
-        );
+        saveStoredData(STORAGE_KEYS.dataset, userId, dataset);
+        saveStoredData(STORAGE_KEYS.preview, userId, preview);
       }
     },
     [userId]
@@ -459,9 +472,12 @@ export function DashboardProvider({
         ...current,
         uploadResult: uploadData,
         datasetPreview: preview ?? current.datasetPreview,
+        decisionResult: null,
       }));
 
       saveStoredData(STORAGE_KEYS.upload, userId, uploadData);
+      sessionStorage.removeItem(STORAGE_KEYS.decision);
+
       if (preview) {
         saveStoredData(STORAGE_KEYS.preview, userId, preview);
       }
@@ -475,9 +491,11 @@ export function DashboardProvider({
         uploadResult,
         fullDataset,
         datasetPreview,
+        decisionResult,
         isUploading,
         setIsUploading,
         setUploadResult,
+        setDecisionResult,
         handleUploadSuccess,
         loadSavedDataset,
         clearDataset,

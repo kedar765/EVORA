@@ -1,39 +1,32 @@
-"""
-EVORA Pydantic Schemas
-======================
-Strongly-typed validation models for:
-- Analytics Agent Output
-- Risk Agent Output
-- Decision Optimization Agent Output
-- LangGraph Workflow State & API Request/Response
-"""
-
+"""EVORA Pydantic schemas for Analytics, Risk and LLM-driven Decision outputs."""
 from __future__ import annotations
 
 import math
 from typing import Any, Dict, List, Literal, Optional
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+
+
+ExecutionMode = Literal["llm", "groq_fallback", "deterministic_fallback", "unavailable"]
+Priority = Literal["low", "medium", "high", "critical"]
 
 
 class EVORABaseSchema(BaseModel):
-    """Common base schema enforcing strict attributes."""
     model_config = ConfigDict(extra="ignore")
 
 
-def _validate_finite_float(val: Optional[float]) -> Optional[float]:
-    if val is None:
+def _validate_finite_float(value: Optional[float]) -> Optional[float]:
+    if value is None:
         return None
     try:
-        f = float(val)
-        if math.isnan(f) or math.isinf(f):
-            return 0.0
-        return round(f, 2)
-    except (ValueError, TypeError):
-        return 0.0
+        number = float(value)
+        if not math.isfinite(number):
+            return None
+        return round(number, 2)
+    except (TypeError, ValueError, OverflowError):
+        return None
 
 
-# Evidence supporting an agent's findings
 class EvidenceItem(EVORABaseSchema):
     description: str
     metric: Optional[str] = None
@@ -41,36 +34,31 @@ class EvidenceItem(EVORABaseSchema):
     source: Optional[str] = None
 
 
-# Analytics Agent Output
 class AnalyticsAgentOutput(EVORABaseSchema):
     total_revenue: Optional[float] = None
     total_expenses: Optional[float] = None
     total_profit: Optional[float] = None
     profit_margin: Optional[float] = None
-
     key_findings: List[str] = Field(default_factory=list)
     recommendations: List[str] = Field(default_factory=list)
     evidence: List[EvidenceItem] = Field(default_factory=list)
-
     product_performance: List[Dict[str, Any]] = Field(default_factory=list)
     monthly_trends: List[Dict[str, Any]] = Field(default_factory=list)
     row_count: int = 0
     summary: str = ""
-
     model_used: Optional[str] = None
-    execution_mode: Literal["llm", "groq_fallback", "deterministic_fallback"] = "llm"
+    execution_mode: ExecutionMode = "llm"
     model_error: Optional[str] = None
 
     @field_validator("total_revenue", "total_expenses", "total_profit", "profit_margin", mode="before")
     @classmethod
-    def check_finite(cls, v: Any) -> Optional[float]:
-        return _validate_finite_float(v)
+    def check_finite(cls, value: Any) -> Optional[float]:
+        return _validate_finite_float(value)
 
 
-# Risk Agent Output
 class RiskFinding(EVORABaseSchema):
     risk_type: str
-    severity: Literal["low", "medium", "high", "critical"]
+    severity: Priority
     description: str
     evidence: List[EvidenceItem] = Field(default_factory=list)
     recommended_action: Optional[str] = None
@@ -78,39 +66,34 @@ class RiskFinding(EVORABaseSchema):
 
 class RiskAgentOutput(EVORABaseSchema):
     risk_score: float = Field(default=0.0, ge=0, le=100)
-    risk_level: Literal["low", "medium", "high", "critical"] = "low"
-
+    risk_level: Priority = "low"
     anomaly_detected: bool = False
     anomaly_count: int = 0
     predicted_profit: Optional[float] = None
     findings: List[RiskFinding] = Field(default_factory=list)
     key_risks: List[str] = Field(default_factory=list)
     evidence: List[EvidenceItem] = Field(default_factory=list)
-
     summary: str = ""
-
     model_used: Optional[str] = None
-    execution_mode: Literal["llm", "groq_fallback", "deterministic_fallback"] = "llm"
+    execution_mode: ExecutionMode = "llm"
     model_error: Optional[str] = None
 
     @field_validator("risk_score", mode="before")
     @classmethod
-    def check_score(cls, v: Any) -> float:
-        val = _validate_finite_float(v)
-        if val is None:
-            return 0.0
-        return max(0.0, min(100.0, float(val)))
+    def check_score(cls, value: Any) -> float:
+        normalized = _validate_finite_float(value)
+        return max(0.0, min(100.0, float(normalized or 0.0)))
 
     @field_validator("predicted_profit", mode="before")
     @classmethod
-    def check_pred_profit(cls, v: Any) -> Optional[float]:
-        return _validate_finite_float(v)
+    def check_predicted_profit(cls, value: Any) -> Optional[float]:
+        return _validate_finite_float(value)
 
 
-# Decision Optimization Agent Output
 class DecisionAction(EVORABaseSchema):
+    """Backward-compatible action shape used by existing EVORA consumers."""
     action: str
-    priority: Literal["low", "medium", "high", "critical"] = "medium"
+    priority: Priority = "medium"
     expected_impact: Optional[str] = None
     estimated_financial_impact: Optional[float] = None
     reason: str
@@ -118,8 +101,57 @@ class DecisionAction(EVORABaseSchema):
 
     @field_validator("estimated_financial_impact", mode="before")
     @classmethod
-    def check_impact(cls, v: Any) -> Optional[float]:
-        return _validate_finite_float(v)
+    def check_impact(cls, value: Any) -> Optional[float]:
+        return _validate_finite_float(value)
+
+
+class DecisionRecommendation(EVORABaseSchema):
+    """One independently reasoned recommendation generated by the Decision LLM."""
+    recommendation_id: Optional[str] = None
+    title: str
+    recommendation: str
+    reasoning: str
+    priority: Priority = "medium"
+    category: Optional[str] = None
+    supporting_evidence: List[EvidenceItem] = Field(default_factory=list)
+    expected_impact: Optional[str] = None
+    estimated_financial_impact: Optional[float] = None
+    implementation_steps: List[str] = Field(default_factory=list)
+    associated_risk: Optional[str] = None
+    risks_and_tradeoffs: Optional[str] = None
+    assumptions: List[str] = Field(default_factory=list)
+    confidence: Optional[float] = Field(default=None, ge=0.0, le=1.0)
+
+    @field_validator("estimated_financial_impact", mode="before")
+    @classmethod
+    def check_financial_impact(cls, value: Any) -> Optional[float]:
+        return _validate_finite_float(value)
+
+    @field_validator("confidence", mode="before")
+    @classmethod
+    def check_confidence(cls, value: Any) -> Optional[float]:
+        return _validate_finite_float(value)
+
+    @model_validator(mode="after")
+    def sync_risk_and_id(self) -> "DecisionRecommendation":
+        if not self.associated_risk and self.risks_and_tradeoffs:
+            self.associated_risk = self.risks_and_tradeoffs
+        elif not self.risks_and_tradeoffs and self.associated_risk:
+            self.risks_and_tradeoffs = self.associated_risk
+        return self
+
+
+class DecisionLLMOutput(EVORABaseSchema):
+    """Structured response whose strategic choices are authored by Gemini/Groq."""
+    analysis_status: Literal["completed", "insufficient_evidence"] = "completed"
+    overall_priority: Priority = "medium"
+    recommended_strategy: str = "No validated strategy selected"
+    alternative_strategies: List[str] = Field(default_factory=list)
+    recommendations: List[DecisionRecommendation] = Field(default_factory=list)
+    expected_outcome: str = ""
+    assumptions: List[str] = Field(default_factory=list)
+    summary: str = ""
+    insufficient_evidence_reason: Optional[str] = None
 
 
 class ScenarioSimulationResult(EVORABaseSchema):
@@ -132,28 +164,28 @@ class ScenarioSimulationResult(EVORABaseSchema):
 
 
 class DecisionAgentOutput(EVORABaseSchema):
-    overall_priority: Literal["low", "medium", "high", "critical"] = "medium"
-
+    analysis_status: Literal["completed", "insufficient_evidence"] = "completed"
+    overall_priority: Priority = "medium"
     recommended_strategy: str
     alternative_strategies: List[str] = Field(default_factory=list)
+    recommendations: List[DecisionRecommendation] = Field(default_factory=list)
+    # Retained for backward compatibility; populated from LLM recommendations, not rules.
     actions: List[DecisionAction] = Field(default_factory=list)
     scenarios: List[ScenarioSimulationResult] = Field(default_factory=list)
-
     expected_outcome: str = ""
     assumptions: List[str] = Field(default_factory=list)
     human_approval_required: bool = True
     summary: str = ""
-
     model_used: Optional[str] = None
-    execution_mode: Literal["llm", "groq_fallback", "deterministic_fallback"] = "llm"
+    execution_mode: Literal["llm", "groq_fallback", "unavailable"] = "llm"
     model_error: Optional[str] = None
+    insufficient_evidence_reason: Optional[str] = None
 
 
-# Final Synthesized Executive Business Report
 class FinalReportOutput(EVORABaseSchema):
     executive_summary: str
     business_health_status: str
-    overall_risk_level: Literal["low", "medium", "high", "critical"]
+    overall_risk_level: Priority
     risk_score: float
     financial_highlights: Dict[str, Any] = Field(default_factory=dict)
     key_insights: List[str] = Field(default_factory=list)
@@ -163,28 +195,23 @@ class FinalReportOutput(EVORABaseSchema):
         "EVORA provides decision-support evidence. "
         "The final business decision and execution remain under human control."
     )
-
     models_used: Dict[str, str] = Field(default_factory=dict)
     execution_modes: Dict[str, str] = Field(default_factory=dict)
 
 
-# Agent Workflow Input
 class AgentWorkflowRequest(EVORABaseSchema):
     dataset_id: str
     user_id: Optional[str] = None
     user_query: str = ""
 
 
-# Final Workflow Output
 class AgentWorkflowResponse(EVORABaseSchema):
     dataset_id: str
     user_query: str = ""
-
     analytics: Optional[AnalyticsAgentOutput] = None
     risk: Optional[RiskAgentOutput] = None
     decision: Optional[DecisionAgentOutput] = None
     final_report: Optional[FinalReportOutput] = None
-
     status: Literal["completed", "partial", "failed"] = "completed"
     errors: List[str] = Field(default_factory=list)
     step_durations: Dict[str, float] = Field(default_factory=dict)

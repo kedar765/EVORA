@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useState } from "react";
+import React from "react";
 import {
   IndianRupee,
   CreditCard,
@@ -12,7 +12,6 @@ import {
   Search,
   Package,
   ArrowUpRight,
-  ArrowDownRight,
 } from "lucide-react";
 import { UploadResult, formatINR } from "./types";
 

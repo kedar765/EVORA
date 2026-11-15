@@ -8,7 +8,6 @@ import {
 import { usePathname, useRouter } from "next/navigation";
 import {
   Menu,
-  RefreshCw,
   ShieldAlert,
   Activity,
   Sparkles,

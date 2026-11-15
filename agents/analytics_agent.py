@@ -19,12 +19,12 @@ import re
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
+import numpy as np
 import pandas as pd
 from dotenv import load_dotenv
 from pydantic import BaseModel, Field
 
 from agents.config import (
-    GROQ_DEFAULT_MODEL,
     ModelQuotaManager,
     create_gemini_chat_model,
     create_groq_chat_model,
@@ -93,8 +93,16 @@ class AnalyticsAgent:
     # -------------------------------------------------------------------------
 
     def _compute_metrics(self, df: pd.DataFrame) -> Dict[str, Any]:
-        """Calculates ground-truth financial figures directly in Pandas."""
-        if df.empty or "Revenue" not in df.columns or "Expense" not in df.columns:
+        """Calculate ground-truth financial metrics from valid numeric rows only.
+
+        Rows with missing, non-numeric, or infinite Revenue/Expense values are
+        excluded from both sides of the calculation so revenue and expense
+        totals always use the same transaction population.
+        """
+        if not isinstance(df, pd.DataFrame):
+            raise TypeError("AnalyticsAgent expects a pandas DataFrame.")
+
+        if df.empty:
             return {
                 "total_revenue": 0.0,
                 "total_expense": 0.0,
@@ -102,34 +110,67 @@ class AnalyticsAgent:
                 "profit_margin": 0.0,
                 "product_performance": [],
                 "monthly_trends": [],
-                "row_count": len(df),
+                "row_count": 0,
+                "data_quality": {
+                    "valid_financial_rows": 0,
+                    "excluded_financial_rows": 0,
+                    "invalid_revenue_values": 0,
+                    "invalid_expense_values": 0,
+                    "profit_margin_available": False,
+                },
             }
 
-        revenue = pd.to_numeric(df["Revenue"], errors="coerce").fillna(0)
-        expense = pd.to_numeric(df["Expense"], errors="coerce").fillna(0)
+        required_columns = ("Revenue", "Expense")
+        missing_columns = [column for column in required_columns if column not in df.columns]
+        if missing_columns:
+            raise ValueError(
+                "Analytics requires the following financial columns: "
+                + ", ".join(missing_columns)
+            )
 
-        total_revenue = float(revenue.sum())
-        total_expense = float(expense.sum())
+        revenue_values = pd.to_numeric(df["Revenue"], errors="coerce").to_numpy(dtype="float64")
+        expense_values = pd.to_numeric(df["Expense"], errors="coerce").to_numpy(dtype="float64")
+        valid_revenue = np.isfinite(revenue_values)
+        valid_expense = np.isfinite(expense_values)
+        valid_mask = valid_revenue & valid_expense
+
+        valid_count = int(valid_mask.sum())
+        if valid_count == 0:
+            raise ValueError(
+                "No rows contain both valid numeric Revenue and Expense values. "
+                "Check the uploaded dataset before running analytics."
+            )
+
+        # Use the same valid rows for revenue, expenses, profit and breakdowns.
+        valid_revenue_values = revenue_values[valid_mask]
+        valid_expense_values = expense_values[valid_mask]
+        total_revenue = float(valid_revenue_values.sum())
+        total_expense = float(valid_expense_values.sum())
         total_profit = total_revenue - total_expense
+        profit_margin_available = total_revenue > 0
+        profit_margin = (total_profit / total_revenue * 100) if profit_margin_available else 0.0
 
-        profit_margin = (
-            (total_profit / total_revenue * 100)
-            if total_revenue != 0 else 0.0
-        )
+        data_quality = {
+            "valid_financial_rows": valid_count,
+            "excluded_financial_rows": int((~valid_mask).sum()),
+            "invalid_revenue_values": int((~valid_revenue).sum()),
+            "invalid_expense_values": int((~valid_expense).sum()),
+            "profit_margin_available": profit_margin_available,
+        }
 
         # Product Performance Analysis
         product_performance: List[Dict[str, Any]] = []
         if "Product" in df.columns:
-            product_df = df.copy()
-            product_df["_Revenue"] = revenue
-            product_df["_Expense"] = expense
-
-            grouped = product_df.groupby("Product").agg(
+            product_df = pd.DataFrame({
+                "Product": df.loc[valid_mask, "Product"].to_numpy(),
+                "_Revenue": valid_revenue_values,
+                "_Expense": valid_expense_values,
+            })
+            grouped = product_df.groupby("Product", dropna=True).agg(
                 revenue=("_Revenue", "sum"),
                 expense=("_Expense", "sum"),
             )
             grouped["profit"] = grouped["revenue"] - grouped["expense"]
-
             product_performance = [
                 {
                     "product": str(product),
@@ -143,11 +184,11 @@ class AnalyticsAgent:
         # Monthly Trends Analysis
         monthly_trends: List[Dict[str, Any]] = []
         if "Date" in df.columns:
-            date_df = df.copy()
-            date_df["Date"] = pd.to_datetime(date_df["Date"], errors="coerce")
-            date_df["_Revenue"] = revenue
-            date_df["_Expense"] = expense
-            date_df = date_df.dropna(subset=["Date"])
+            date_df = pd.DataFrame({
+                "Date": pd.to_datetime(df.loc[valid_mask, "Date"], errors="coerce").to_numpy(),
+                "_Revenue": valid_revenue_values,
+                "_Expense": valid_expense_values,
+            }).dropna(subset=["Date"])
 
             if not date_df.empty:
                 date_df["Month"] = date_df["Date"].dt.to_period("M").astype(str)
@@ -156,7 +197,6 @@ class AnalyticsAgent:
                     expense=("_Expense", "sum"),
                 )
                 monthly["profit"] = monthly["revenue"] - monthly["expense"]
-
                 monthly_trends = [
                     {
                         "month": str(month),
@@ -175,6 +215,7 @@ class AnalyticsAgent:
             "product_performance": product_performance,
             "monthly_trends": monthly_trends,
             "row_count": len(df),
+            "data_quality": data_quality,
         }
 
     # -------------------------------------------------------------------------
@@ -203,7 +244,9 @@ class AnalyticsAgent:
                 "total_expense": metrics["total_expense"],
                 "total_profit": metrics["total_profit"],
                 "profit_margin_percent": metrics["profit_margin"],
-                "total_transactions_analyzed": metrics.get("row_count", 0),
+                "total_transactions_analyzed": metrics.get("data_quality", {}).get(
+                    "valid_financial_rows", metrics.get("row_count", 0)
+                ),
             },
             "top_profitable_products": [
                 {
@@ -350,34 +393,118 @@ class AnalyticsAgent:
     # 4. LLM Response Extraction and Validation
     # -------------------------------------------------------------------------
 
-    def _validate_llm_output(self, output: Any) -> Optional[Tuple[List[str], List[str]]]:
-        """Validates that the LLM response contains clean, non-empty insights & recommendations."""
+    @staticmethod
+    def _numeric_values_in_source(value: Any) -> set:
+        """Collect finite numeric values explicitly present in the supplied summary."""
+        values = set()
+        numeric_pattern = re.compile(r"(?<![A-Za-z])(-?\d[\d,]*(?:\.\d+)?)(?![A-Za-z])")
+
+        def visit(item: Any) -> None:
+            if isinstance(item, bool) or item is None:
+                return
+            if isinstance(item, (int, float, np.number)):
+                number = float(item)
+                if np.isfinite(number):
+                    values.add(number)
+                return
+            if isinstance(item, dict):
+                for nested in item.values():
+                    visit(nested)
+                return
+            if isinstance(item, (list, tuple)):
+                for nested in item:
+                    visit(nested)
+                return
+            if isinstance(item, str):
+                for match in numeric_pattern.finditer(item):
+                    try:
+                        number = float(match.group(1).replace(",", ""))
+                        if np.isfinite(number):
+                            values.add(number)
+                    except (TypeError, ValueError):
+                        continue
+
+        visit(value)
+        return values
+
+    def _has_only_grounded_numeric_claims(
+        self,
+        texts: List[str],
+        summary: Optional[Dict[str, Any]],
+    ) -> bool:
+        """Reject LLM output containing numeric claims absent from source metrics."""
+        if summary is None:
+            return True
+
+        allowed_values = self._numeric_values_in_source(summary)
+        claim_pattern = re.compile(
+            r"(?<![A-Za-z])(?:₹\s*)?(-?\d[\d,]*(?:\.\d+)?)\s*(?:%|percent)?(?![A-Za-z])",
+            re.IGNORECASE,
+        )
+        for text_value in texts:
+            for match in claim_pattern.finditer(text_value):
+                try:
+                    claimed = float(match.group(1).replace(",", ""))
+                except (TypeError, ValueError):
+                    return False
+                if not any(
+                    abs(claimed - allowed) <= max(1e-6, abs(allowed) * 1e-6)
+                    for allowed in allowed_values
+                ):
+                    logger.warning(
+                        "Rejected LLM output containing an unsupported numeric claim: %s",
+                        match.group(0).strip(),
+                    )
+                    return False
+        return True
+
+    def _validate_llm_output(
+        self,
+        output: Any,
+        summary: Optional[Dict[str, Any]] = None,
+    ) -> Optional[Tuple[List[str], List[str]]]:
+        """Validate schema, text quality and numeric claims against source metrics."""
         try:
             if isinstance(output, AnalyticsLLMOutput):
-                insights = [str(i).strip() for i in output.insights if str(i).strip()]
-                recommendations = [str(r).strip() for r in output.recommendations if str(r).strip()]
-                if insights and recommendations:
-                    return insights, recommendations
-                return None
-
-            if isinstance(output, dict):
+                insights_raw = output.insights
+                recs_raw = output.recommendations
+            elif isinstance(output, dict):
                 insights_raw = output.get("insights", [])
                 recs_raw = output.get("recommendations", [])
-                if isinstance(insights_raw, list) and isinstance(recs_raw, list):
-                    insights = [str(i).strip() for i in insights_raw if str(i).strip()]
-                    recommendations = [str(r).strip() for r in recs_raw if str(r).strip()]
-                    if insights and recommendations:
-                        return insights, recommendations
+            elif isinstance(output, str):
+                match = re.search(r"\{.*\}", output.strip(), re.DOTALL)
+                if not match:
+                    return None
+                return self._validate_llm_output(json.loads(match.group(0)), summary)
+            else:
                 return None
 
-            if isinstance(output, str):
-                cleaned = output.strip()
-                match = re.search(r"\{.*\}", cleaned, re.DOTALL)
-                if match:
-                    parsed = json.loads(match.group(0))
-                    return self._validate_llm_output(parsed)
+            if not isinstance(insights_raw, list) or not isinstance(recs_raw, list):
+                return None
 
-            return None
+            def clean(items: List[Any]) -> List[str]:
+                cleaned: List[str] = []
+                seen = set()
+                for item in items:
+                    if not isinstance(item, str):
+                        continue
+                    value = item.strip()
+                    if not value or len(value) > 600:
+                        continue
+                    normalized = value.casefold()
+                    if normalized not in seen:
+                        seen.add(normalized)
+                        cleaned.append(value)
+                return cleaned
+
+            insights = clean(insights_raw)
+            recommendations = clean(recs_raw)
+            if not insights or not recommendations:
+                return None
+
+            if not self._has_only_grounded_numeric_claims(insights + recommendations, summary):
+                return None
+            return insights[:5], recommendations[:4]
         except Exception as e:
             logger.debug("Failed to validate LLM output: %s", e)
             return None
@@ -393,6 +520,10 @@ class AnalyticsAgent:
         if not self.gemini_api_key:
             logger.debug("Gemini API key is not configured.")
             return None
+        exhausted, reason = ModelQuotaManager.is_exhausted(self.gemini_model)
+        if exhausted:
+            logger.info("Skipping quota-exhausted Gemini model %s: %s", self.gemini_model, reason)
+            return None
 
         prompt_text = (
             "You are the AI Analytics Engine for EVORA (Enterprise Vision Optimizing Reasoning Assistant).\n"
@@ -401,6 +532,7 @@ class AnalyticsAgent:
             "2. 'recommendations': 2 to 4 high-impact, practical recommendations for leadership to optimize margins and manage costs.\n\n"
             "Constraints:\n"
             "- Rely strictly on the provided financial metrics. Do not fabricate numbers or invent data not in the summary.\n"
+            "- Do not include any numerical value unless that exact value is supported by the summary.\n"
             "- Be concise, professional, and executive-ready.\n\n"
             f"Financial Summary:\n{json.dumps(summary, indent=2)}"
         )
@@ -419,13 +551,15 @@ class AnalyticsAgent:
             structured_llm = llm.with_structured_output(AnalyticsLLMOutput)
             raw_response = structured_llm.invoke(prompt_text)
 
-            validated = self._validate_llm_output(raw_response)
+            validated = self._validate_llm_output(raw_response, summary)
             if validated:
                 logger.info("Successfully generated insights using Gemini model: %s", self.gemini_model)
                 return validated
 
         except Exception as e:
             logger.warning("Gemini (%s) invocation failed: %s", self.gemini_model, e)
+            if ModelQuotaManager.is_quota_error(e):
+                ModelQuotaManager.mark_exhausted(self.gemini_model, str(e))
 
         return None
 
@@ -448,6 +582,7 @@ class AnalyticsAgent:
             "2. 'recommendations': 2 to 4 high-impact, practical recommendations for leadership to optimize margins and manage costs.\n\n"
             "Constraints:\n"
             "- Rely strictly on the provided financial metrics. Do not fabricate numbers or invent data not in the summary.\n"
+            "- Do not include any numerical value unless that exact value is supported by the summary.\n"
             "- Be concise, professional, and executive-ready.\n\n"
             f"Financial Summary:\n{json.dumps(summary, indent=2)}"
         )
@@ -463,7 +598,7 @@ class AnalyticsAgent:
             structured_llm = llm.with_structured_output(AnalyticsLLMOutput)
             raw_response = structured_llm.invoke(prompt_text)
 
-            validated = self._validate_llm_output(raw_response)
+            validated = self._validate_llm_output(raw_response, summary)
             if validated:
                 logger.info("Successfully generated insights using Groq model: %s", self.groq_model)
                 return validated
@@ -519,6 +654,7 @@ class AnalyticsAgent:
         if not any(status_keyword.lower() in s.lower() for s in insights):
             insights.insert(0, status_keyword)
 
+        logger.info("Analytics insights generated using provider: %s", provider)
         return insights, recommendations, provider
 
     # -------------------------------------------------------------------------
@@ -554,6 +690,7 @@ class AnalyticsAgent:
                 ],
                 "product_performance": [],
                 "monthly_trends": [],
+                "data_quality": metrics.get("data_quality", {}),
             }
 
         # 2. Create compact privacy-safe summary for LLM
@@ -561,6 +698,15 @@ class AnalyticsAgent:
 
         # 3. Multi-tier LLM reasoning (Gemini -> Groq -> Rule-Based)
         insights, recommendations, _ = self._generate_insights(summary, metrics)
+        quality = metrics.get("data_quality", {})
+        excluded_rows = int(quality.get("excluded_financial_rows", 0))
+        if excluded_rows:
+            insights.append(
+                f"Financial totals use {quality.get('valid_financial_rows', 0)} valid rows; "
+                f"{excluded_rows} rows with invalid Revenue or Expense values were excluded."
+            )
+        if not quality.get("profit_margin_available", True):
+            insights.append("Profit margin is unavailable because total revenue is not positive.")
 
         return {
             "total_revenue": metrics["total_revenue"],
@@ -571,44 +717,59 @@ class AnalyticsAgent:
             "recommendations": recommendations,
             "product_performance": metrics["product_performance"],
             "monthly_trends": metrics["monthly_trends"],
+            "data_quality": quality,
         }
 
     # -------------------------------------------------------------------------
     # 9. Multi-Agent Workflow Interface (LangChain Tool-Calling Agent)
     # -------------------------------------------------------------------------
 
-    def get_llm(self) -> Any:
-        """Resolves the LLM for the Analytics Agent according to tiered fallback strategy."""
+    def _resolve_llm(self) -> Tuple[Any, str, Optional[str]]:
+        """Resolve the first available provider and report which one was selected."""
         if os.getenv("EVORA_SKIP_EXTERNAL_LLM", "0") == "1":
-            return AnalyticsToolCallingModel(agent_instance=self)
+            return (
+                AnalyticsToolCallingModel(agent_instance=self),
+                "deterministic_fallback",
+                "External LLM calls are disabled by EVORA_SKIP_EXTERNAL_LLM=1",
+            )
 
-        is_exhausted, _ = ModelQuotaManager.is_exhausted(self.gemini_model)
-        if not is_exhausted and self.gemini_api_key:
+        init_errors: List[str] = []
+        is_exhausted, exhaust_reason = ModelQuotaManager.is_exhausted(self.gemini_model)
+        if self.gemini_api_key and not is_exhausted:
             try:
-                return create_gemini_chat_model(
+                llm = create_gemini_chat_model(
                     model_name=self.gemini_model,
                     api_key=self.gemini_api_key,
                     timeout=self.timeout,
                 )
+                return llm, "gemini", None
             except Exception as e:
-                logger.warning(f"Failed to initialize ChatGoogleGenerativeAI for AnalyticsAgent: {e}")
+                logger.warning("Failed to initialize Gemini for AnalyticsAgent: %s", e)
+                init_errors.append(f"Gemini initialization failed: {e}")
                 if ModelQuotaManager.is_quota_error(e):
                     ModelQuotaManager.mark_exhausted(self.gemini_model, str(e))
         elif is_exhausted:
-            logger.info("Analytics Agent: Model %s is marked quota-exhausted; skipping direct LLM call.", self.gemini_model)
+            init_errors.append(f"Gemini quota exhausted: {exhaust_reason}")
 
         if self.groq_api_key:
             try:
-                return create_groq_chat_model(
+                llm = create_groq_chat_model(
                     model_name=self.groq_model,
                     api_key=self.groq_api_key,
                     temperature=0.1,
                     timeout=self.timeout,
                 )
+                return llm, "groq", "; ".join(init_errors) or None
             except Exception as e:
-                logger.warning(f"Failed to initialize ChatGroq: {e}")
+                logger.warning("Failed to initialize Groq for AnalyticsAgent: %s", e)
+                init_errors.append(f"Groq initialization failed: {e}")
 
-        return AnalyticsToolCallingModel(agent_instance=self)
+        fallback_reason = "; ".join(init_errors) or "No external LLM provider is configured"
+        return AnalyticsToolCallingModel(agent_instance=self), "deterministic_fallback", fallback_reason
+
+    def get_llm(self) -> Any:
+        """Backward-compatible LLM resolver; returns the selected model only."""
+        return self._resolve_llm()[0]
 
     def build_langchain_agent(self, llm: Optional[Any] = None) -> Any:
         """Constructs a real LangChain tool-calling agent using create_agent."""
@@ -644,6 +805,31 @@ class AnalyticsAgent:
         model = llm or self.get_llm()
         return create_agent(model=model, tools=tools, system_prompt=system_prompt)
 
+    @staticmethod
+    def _decode_tool_payload(payload: Any) -> Any:
+        """Decode JSON tool content while accepting already-decoded dictionaries."""
+        if isinstance(payload, (dict, list)):
+            return payload
+        if isinstance(payload, str):
+            try:
+                return json.loads(payload)
+            except (TypeError, ValueError):
+                return payload
+        return payload
+
+    @staticmethod
+    def _finite_metric(metrics: Dict[str, Any], key: str) -> float:
+        """Read a required numeric metric without silently substituting zero."""
+        if key not in metrics or metrics[key] is None:
+            raise ValueError(f"Analytics tool output is missing required metric '{key}'.")
+        try:
+            value = float(metrics[key])
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"Analytics tool returned a non-numeric '{key}' value.") from exc
+        if not np.isfinite(value):
+            raise ValueError(f"Analytics tool returned a non-finite '{key}' value.")
+        return value
+
     def run_agent(
         self,
         dataset_id: str,
@@ -666,54 +852,59 @@ class AnalyticsAgent:
             f"User Question: {user_query or 'Provide a comprehensive financial and operational analytics report.'}"
         )
 
-        # 1. Execute actual LangChain agent
-        model_used = self.gemini_model
-        execution_mode = "llm"
-        model_error: Optional[str] = None
-
-        is_exhausted, exhaust_reason = ModelQuotaManager.is_exhausted(self.gemini_model)
-        if is_exhausted or os.getenv("EVORA_SKIP_EXTERNAL_LLM", "0") == "1":
-            execution_mode = "deterministic_fallback"
-            model_used = f"deterministic_fallback (requested: {self.gemini_model})"
-            model_error = exhaust_reason or "External LLM skipped or quota exhausted"
-            fallback_model = AnalyticsToolCallingModel(agent_instance=self)
-            fallback_agent = self.build_langchain_agent(llm=fallback_model)
-            res = fallback_agent.invoke({"messages": [HumanMessage(content=prompt)]})
+        # 1. Resolve and execute the actual LangChain agent.
+        llm, selected_provider, init_error = self._resolve_llm()
+        model_error: Optional[str] = init_error
+        if selected_provider == "gemini":
+            model_used = self.gemini_model
+            execution_mode = "llm"
+        elif selected_provider == "groq":
+            model_used = self.groq_model
+            execution_mode = "groq_fallback"
         else:
-            agent = self.build_langchain_agent()
-            try:
-                res = agent.invoke({"messages": [HumanMessage(content=prompt)]})
-                execution_mode = "llm"
-                model_used = self.gemini_model
-            except Exception as e:
-                model_error = str(e)
-                logger.warning(f"Primary LangChain agent invocation failed ({e}); checking fallback.")
-                if ModelQuotaManager.is_quota_error(e):
-                    ModelQuotaManager.mark_exhausted(self.gemini_model, str(e))
+            model_used = f"deterministic_fallback (requested: {self.gemini_model})"
+            execution_mode = "deterministic_fallback"
 
-                groq_succeeded = False
-                if self.groq_api_key:
-                    try:
-                        groq_llm = create_groq_chat_model(
-                            model_name=self.groq_model,
-                            api_key=self.groq_api_key,
-                            temperature=0.1,
-                            timeout=self.timeout,
-                        )
-                        groq_agent = self.build_langchain_agent(llm=groq_llm)
-                        res = groq_agent.invoke({"messages": [HumanMessage(content=prompt)]})
-                        execution_mode = "groq_fallback"
-                        model_used = self.groq_model
-                        groq_succeeded = True
-                    except Exception as ge:
-                        logger.warning(f"Groq fallback failed: {ge}")
+        try:
+            agent = self.build_langchain_agent(llm=llm)
+            res = agent.invoke({"messages": [HumanMessage(content=prompt)]})
+        except Exception as primary_error:
+            if selected_provider == "deterministic_fallback":
+                raise
 
-                if not groq_succeeded:
-                    execution_mode = "deterministic_fallback"
-                    model_used = f"deterministic_fallback (requested: {self.gemini_model})"
-                    fallback_model = AnalyticsToolCallingModel(agent_instance=self)
-                    fallback_agent = self.build_langchain_agent(llm=fallback_model)
-                    res = fallback_agent.invoke({"messages": [HumanMessage(content=prompt)]})
+            model_error = str(primary_error)
+            logger.warning(
+                "Analytics %s agent invocation failed: %s",
+                selected_provider,
+                primary_error,
+            )
+            if selected_provider == "gemini" and ModelQuotaManager.is_quota_error(primary_error):
+                ModelQuotaManager.mark_exhausted(self.gemini_model, str(primary_error))
+
+            groq_succeeded = False
+            if selected_provider != "groq" and self.groq_api_key:
+                try:
+                    groq_llm = create_groq_chat_model(
+                        model_name=self.groq_model,
+                        api_key=self.groq_api_key,
+                        temperature=0.1,
+                        timeout=self.timeout,
+                    )
+                    groq_agent = self.build_langchain_agent(llm=groq_llm)
+                    res = groq_agent.invoke({"messages": [HumanMessage(content=prompt)]})
+                    execution_mode = "groq_fallback"
+                    model_used = self.groq_model
+                    groq_succeeded = True
+                except Exception as groq_error:
+                    logger.warning("Analytics Groq fallback failed: %s", groq_error)
+                    model_error = f"{primary_error}; Groq fallback failed: {groq_error}"
+
+            if not groq_succeeded:
+                fallback_model = AnalyticsToolCallingModel(agent_instance=self)
+                fallback_agent = self.build_langchain_agent(llm=fallback_model)
+                res = fallback_agent.invoke({"messages": [HumanMessage(content=prompt)]})
+                execution_mode = "deterministic_fallback"
+                model_used = f"deterministic_fallback (requested: {self.gemini_model})"
 
         # 2. Extract tool messages and findings from the agent conversation
         messages = res.get("messages", [])
@@ -721,27 +912,32 @@ class AnalyticsAgent:
         for m in messages:
             if isinstance(m, ToolMessage):
                 tool_name = getattr(m, "name", None) or "unknown"
-                try:
-                    tool_results[tool_name] = json.loads(m.content) if isinstance(m.content, str) else m.content
-                except Exception:
-                    tool_results[tool_name] = m.content
+                tool_results[tool_name] = self._decode_tool_payload(m.content)
 
         # 3. Ensure core metrics are present from tool output
         metrics = tool_results.get("calculate_business_metrics")
         if not metrics or not isinstance(metrics, dict):
             from tools.analytics_tools import calculate_business_metrics
             metrics_raw = calculate_business_metrics.invoke({"dataset_id": dataset_id, "user_id": user_id})
-            metrics = json.loads(metrics_raw)
+            metrics = self._decode_tool_payload(metrics_raw)
 
-        total_revenue = float(metrics.get("total_revenue", 0.0))
-        total_expenses = float(metrics.get("total_expenses", 0.0))
-        total_profit = float(metrics.get("total_profit", 0.0))
-        profit_margin = float(metrics.get("profit_margin_pct", 0.0))
+        if not isinstance(metrics, dict):
+            raise ValueError("Analytics metrics tool returned an invalid response.")
+        total_revenue = self._finite_metric(metrics, "total_revenue")
+        total_expenses = self._finite_metric(metrics, "total_expenses")
+        total_profit = self._finite_metric(metrics, "total_profit")
+        profit_margin = self._finite_metric(metrics, "profit_margin_pct")
 
         # 4. Extract product performance and trends if called
-        products_res = tool_results.get("analyze_product_performance") or {}
-        trends_res = tool_results.get("analyze_time_trends") or {}
-        segments_res = tool_results.get("compare_business_segments") or {}
+        products_res = self._decode_tool_payload(tool_results.get("analyze_product_performance")) or {}
+        trends_res = self._decode_tool_payload(tool_results.get("analyze_time_trends")) or {}
+        segments_res = self._decode_tool_payload(tool_results.get("compare_business_segments")) or {}
+        if not isinstance(products_res, dict):
+            products_res = {}
+        if not isinstance(trends_res, dict):
+            trends_res = {}
+        if not isinstance(segments_res, dict):
+            segments_res = {}
 
         # 5. Assemble evidence items
         evidence: List[EvidenceItem] = [
@@ -941,10 +1137,12 @@ class AnalyticsToolCallingModel:
             tool_name = getattr(tm, "name", None) or "unknown"
             try:
                 tool_results_map[tool_name] = json.loads(tm.content) if isinstance(tm.content, str) else tm.content
-            except Exception:
+            except (TypeError, ValueError):
                 tool_results_map[tool_name] = tm.content
 
         metrics = tool_results_map.get("calculate_business_metrics", {})
+        if not isinstance(metrics, dict):
+            metrics = {}
         rev = metrics.get("total_revenue", 0.0)
         exp = metrics.get("total_expenses", 0.0)
         prof = metrics.get("total_profit", 0.0)
@@ -957,7 +1155,6 @@ class AnalyticsToolCallingModel:
         return ChatResult(generations=[ChatGeneration(message=AIMessage(content=synthesis))])
 
     def invoke(self, input: Any, config: Optional[Any] = None, **kwargs: Any) -> Any:
-        from langchain_core.messages import BaseMessage
         messages = input if isinstance(input, list) else input.get("messages", [])
         return self._generate(messages).generations[0].message
 
@@ -968,4 +1165,3 @@ def create_analytics_agent(
 ) -> AnalyticsAgent:
     """Factory creating an AnalyticsAgent instance."""
     return AnalyticsAgent(gemini_api_key=gemini_api_key, groq_api_key=groq_api_key)
-

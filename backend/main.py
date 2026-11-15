@@ -2,6 +2,7 @@ import io
 import json
 import math
 import os
+import re
 import sys
 import time
 import uuid
@@ -28,6 +29,7 @@ from fastapi import (
     Request,
     UploadFile,
     Query,
+    status,
 )
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -39,13 +41,14 @@ sys.path.insert(0, str(ROOT_DIR))
 
 from agents.analytics_agent import AnalyticsAgent
 from agents.risk_agent import RiskAgent
-from agents.decision_agent import DecisionOptimizationAgent
+from agents.decision_agent import DecisionLLMUnavailableError, DecisionOptimizationAgent
 
 from backend.auth import (
     database,
     get_current_user,
     router as auth_router,
 )
+from backend.database import close_connection_pool
 from backend.features import prepare_features
 from ml.forecast import DailyProfitForecaster
 from schemas.agent_schemas import AgentWorkflowRequest
@@ -58,18 +61,33 @@ app = FastAPI(
     version="1.0.0",
 )
 
+CORS_ORIGINS = [
+    origin.strip().rstrip("/")
+    for origin in os.getenv(
+        "EVORA_CORS_ORIGINS",
+        os.getenv(
+            "EVORA_TRUSTED_ORIGINS",
+            "http://localhost:3000,http://127.0.0.1:3000,http://localhost:8000,http://127.0.0.1:8000",
+        ),
+    ).split(",")
+    if origin.strip()
+]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:3000",
-        "http://127.0.0.1:3000",
-    ],
+    allow_origins=CORS_ORIGINS,
+    allow_origin_regex=r"^https://.*\.vercel\.app$",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
 app.include_router(auth_router)
+
+
+@app.on_event("shutdown")
+def shutdown_event():
+    close_connection_pool()
 
 
 # ---------------------------------------
@@ -133,7 +151,12 @@ async def csrf_origin_guard(
 
     origin = get_request_origin(request)
 
-    if origin not in TRUSTED_ORIGINS:
+    is_trusted = (
+        origin in TRUSTED_ORIGINS
+        or (origin and bool(re.match(r"^https://.*\.vercel\.app$", origin)))
+    )
+
+    if not is_trusted:
         return JSONResponse(
             status_code=403,
             content={
@@ -342,6 +365,12 @@ def persist_uploaded_dataset(
     try:
         temporary_path.write_bytes(file_contents)
         temporary_path.replace(final_path)
+
+        try:
+            from backend.storage import upload_dataset_to_storage
+            upload_dataset_to_storage(stored_filename, file_contents)
+        except Exception as storage_exc:
+            print(f"Supabase Storage sync notice: {storage_exc}")
         with database() as connection:
             connection.execute(
                 """
@@ -936,6 +965,12 @@ def preview_dataset(
             detail="Stored dataset path is outside private storage.",
         ) from exc
 
+    try:
+        from backend.storage import ensure_dataset_available
+        csv_path = ensure_dataset_available(dataset["storage_path"])
+    except Exception:
+        pass
+
     if not csv_path.is_file():
         raise HTTPException(
             status_code=404,
@@ -1419,11 +1454,22 @@ def get_decision_recommendations(
     data: DecisionRecommendationRequest,
     user: dict = Depends(get_current_user),
 ):
-    decision_result = decision_agent.recommend(
-        analytics=data.analytics,
-        risk=data.risk,
-        scenario=data.scenario,
-    )
+    try:
+        decision_result = decision_agent.recommend(
+            analytics=data.analytics,
+            risk=data.risk,
+            scenario=data.scenario,
+        )
+    except DecisionLLMUnavailableError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f"EVORA Decision AI is currently unavailable: {exc}",
+        )
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Decision recommendation generation failed: {exc}",
+        )
 
     response = {
         "success": True,

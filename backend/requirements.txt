@@ -13,3 +13,5 @@ langchain-groq
 python-dotenv
 pytest
 xlrd>=2.0.1
+psycopg[binary,pool]>=3.2
+supabase>=2.0

@@ -50,7 +50,6 @@ export default function PredictionsPage() {
 
   useEffect(() => {
     let isActive = true;
-    setForecastLoading(true);
 
     api.getForecastNextDay(activeDatasetId)
       .then((data) => {

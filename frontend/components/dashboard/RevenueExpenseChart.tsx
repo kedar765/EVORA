@@ -6,8 +6,6 @@ import {
   Calendar,
   Layers,
   Info,
-  TrendingUp,
-  ArrowUpRight,
 } from "lucide-react";
 import { FullDatasetData, UploadResult, formatINR } from "./types";
 

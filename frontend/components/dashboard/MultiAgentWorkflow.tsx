@@ -5,15 +5,10 @@ import {
   Play,
   CheckCircle2,
   AlertTriangle,
-  BrainCircuit,
-  FileText,
   Loader2,
-  Sparkles,
-  ChevronRight,
   ShieldAlert,
   BarChart3,
   Target,
-  ArrowRight,
   TrendingUp,
 } from "lucide-react";
 import { api, type AgentWorkflowResponse } from "@/lib/api";

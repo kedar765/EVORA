@@ -64,13 +64,41 @@ export interface DecisionAction {
   reason: string;
   expected_benefit: string;
   risk: string;
+  priority?: string;
+  estimated_financial_impact?: number | null;
+}
+
+export interface DecisionEvidenceItem {
+  description: string;
+  metric?: string;
+  value?: number;
+  source?: string;
+}
+
+export interface DecisionRecommendationItem {
+  recommendation_id?: string;
+  title: string;
+  recommendation: string;
+  reasoning: string;
+  priority: "low" | "medium" | "high" | "critical" | "LOW" | "MEDIUM" | "HIGH" | "CRITICAL";
+  category?: string;
+  supporting_evidence?: DecisionEvidenceItem[];
+  expected_impact?: string;
+  estimated_financial_impact?: number | null;
+  implementation_steps?: string[];
+  associated_risk?: string;
+  risks_and_tradeoffs?: string;
+  assumptions?: string[];
+  confidence?: number | null;
 }
 
 export interface DecisionRecommendationResponse {
   success: boolean;
   decision: {
     question_addressed: string;
-    priority: "HIGH" | "MEDIUM" | "LOW";
+    priority: "HIGH" | "MEDIUM" | "LOW" | "CRITICAL" | "high" | "medium" | "low" | "critical";
+    recommended_strategy?: string;
+    alternative_strategies?: string[];
     risk_context: {
       risk_level: string;
       risk_score: number;
@@ -78,11 +106,14 @@ export interface DecisionRecommendationResponse {
     };
     evidence: string[];
     recommendations: string[];
+    structured_recommendations?: DecisionRecommendationItem[];
     action_plan: DecisionAction[];
+    assumptions?: string[];
+    expected_outcome?: string;
     decision_disclaimer: string;
   };
-  analysis_id: string;
-  created_at: number;
+  analysis_id?: string;
+  created_at?: number;
 }
 
 export interface DatasetItem {

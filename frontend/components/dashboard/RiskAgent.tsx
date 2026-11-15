@@ -23,10 +23,6 @@ interface RiskAgentProps {
   isLoading?: boolean;
 }
 
-const API_BASE_URL =
-  process.env.NEXT_PUBLIC_API_URL ||
-  "http://localhost:8000";
-
 export default function RiskAgent({
   automaticRiskResult,
   isLoading = false,

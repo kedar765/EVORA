@@ -81,8 +81,8 @@ class DatasetAccessError(Exception):
 
 
 def _get_database_connection():
-    """Lazily import and connect to EVORA SQLite database."""
-    from backend.auth import database
+    """Lazily import and connect to EVORA database (PostgreSQL or local fallback)."""
+    from backend.database import database
     return database()
 
 
@@ -117,6 +117,12 @@ def resolve_safe_dataset_path(storage_path_str: str) -> Path:
             "Access denied: Dataset path points outside authorized storage directory.",
             status_code=403,
         ) from exc
+
+    try:
+        from backend.storage import ensure_dataset_available
+        resolved_path = ensure_dataset_available(storage_path_str)
+    except Exception:
+        pass
 
     if not resolved_path.is_file():
         raise DatasetAccessError(

@@ -212,6 +212,8 @@ def decision_agent_node(state: EVORAAgentState) -> Dict[str, Any]:
         logger.exception("Decision agent failed")
         durations["decision_agent"] = round(time.perf_counter() - start_time, 4)
         agent_statuses["decision_agent"] = "failed"
+        models_used["decision_agent"] = f"unavailable (requested: {agent.gemini_model})"
+        execution_modes["decision_agent"] = "unavailable"
         errors.append(f"Decision agent execution error: {str(e)}")
         return {
             "errors": errors,

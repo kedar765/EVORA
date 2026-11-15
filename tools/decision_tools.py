@@ -1,4 +1,4 @@
-"""
+﻿"""
 EVORA Decision Optimization Tools
 =================================
 Production LangChain tools for business scenario simulation, strategy comparison,

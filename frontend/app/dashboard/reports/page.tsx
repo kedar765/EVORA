@@ -1,3 +1,4 @@
+
 "use client";
 
 import React, { useState, useEffect } from "react";
@@ -16,14 +17,13 @@ import {
   Sparkles,
   History,
   Loader2,
-  Database,
 } from "lucide-react";
 import { useDashboard } from "@/components/dashboard/DashboardContext";
 import { formatINR } from "@/components/dashboard/types";
 import { api, type AnalysisHistoryItem } from "@/lib/api";
 
 export default function ReportsPage() {
-  const { uploadResult, fullDataset } = useDashboard();
+  const { uploadResult, fullDataset, decisionResult } = useDashboard();
   const [downloadNotice, setDownloadNotice] = useState<string>("");
   const [showBriefPreview, setShowBriefPreview] = useState<boolean>(false);
   const [historyList, setHistoryList] = useState<AnalysisHistoryItem[]>([]);
@@ -110,6 +110,7 @@ export default function ReportsPage() {
         reasons: uploadResult.risk_analysis?.reasons || [],
       },
       analytics: uploadResult.analytics,
+      decision_intelligence: decisionResult ?? null,
       governance: "Human decision support mode; estimates do not guarantee commercial outcomes.",
     };
 
@@ -391,6 +392,105 @@ export default function ReportsPage() {
                 </div>
               </div>
             )}
+
+            {/* Decision Agent Intelligence */}
+            {decisionResult && (
+              <>
+                <div className="space-y-3 p-4 rounded-xl border border-emerald-200 bg-emerald-50/40">
+                  <div className="flex items-center gap-2">
+                    <Sparkles className="w-4 h-4 text-emerald-700" />
+                    <span className="text-xs font-bold uppercase tracking-wider text-emerald-800">
+                      Decision Agent Intelligence
+                    </span>
+                  </div>
+
+                  <p className="text-xs text-slate-700">
+                    <strong>Business Question:</strong> {decisionResult.question_addressed}
+                  </p>
+
+                  <p className="text-xs text-slate-700">
+                    <strong>Priority:</strong> {decisionResult.priority}
+                  </p>
+
+                  {decisionResult.recommended_strategy && (
+                    <p className="text-xs text-slate-700">
+                      <strong>Recommended Strategy:</strong> {decisionResult.recommended_strategy}
+                    </p>
+                  )}
+
+                  {decisionResult.recommendations?.length > 0 && (
+                    <div className="space-y-2">
+                      <p className="text-xs font-semibold text-slate-700">
+                        Recommendations
+                      </p>
+
+                      <ul className="list-disc pl-5 space-y-1">
+                        {decisionResult.recommendations.map((item, index) => (
+                          <li key={index} className="text-xs text-slate-700">
+                            {item}
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+                </div>
+
+                {/* Action Plan - Start on a new printed page */}
+                {decisionResult.action_plan?.length > 0 && (
+                  <div
+                    className="space-y-3 p-4 rounded-xl border border-emerald-200 bg-emerald-50/40 print:break-before-page"
+                    style={{
+                      breakBefore: "page",
+                      pageBreakBefore: "always",
+                    }}
+                  >
+                    <div className="flex items-center gap-2">
+                      <Sparkles className="w-4 h-4 text-emerald-700" />
+                      <p className="text-xs font-bold uppercase tracking-wider text-emerald-800">
+                        Action Plan
+                      </p>
+                    </div>
+
+                    {decisionResult.action_plan.map((action, i) => (
+                      <div
+                        key={i}
+                        className="p-3 rounded-lg bg-white border border-emerald-100 space-y-1"
+                        style={{
+                          breakInside: "avoid",
+                          pageBreakInside: "avoid",
+                        }}
+                      >
+                        <p className="text-xs font-bold text-slate-800">
+                          {i + 1}. {action.action}
+                        </p>
+                        <p className="text-xs text-slate-600">
+                          Reason: {action.reason}
+                        </p>
+                        <p className="text-xs text-slate-600">
+                          Expected Benefit: {action.expected_benefit}
+                        </p>
+                        <p className="text-xs text-slate-600">
+                          Risk: {action.risk}
+                        </p>
+
+                        {action.priority && (
+                          <p className="text-xs text-slate-600">
+                            Priority: {action.priority}
+                          </p>
+                        )}
+
+                        {action.estimated_financial_impact != null && (
+                          <p className="text-xs text-slate-600">
+                            Estimated Financial Impact: {formatINR(action.estimated_financial_impact)}
+                          </p>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </>
+            )}
+
 
             <div className="pt-3 border-t border-slate-100 flex items-center justify-between text-[11px] text-slate-400">
               <span>EVORA Autonomous Business Intelligence • Human-In-The-Loop Decision Support</span>
